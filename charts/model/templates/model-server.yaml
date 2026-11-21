@@ -8,6 +8,14 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}-vllm
+  labels:
+    inference-stack/stack: {{ .Values.stackRelease | quote }}
+    inference-stack/model: {{ .Release.Name | quote }}
+  annotations:
+    inference-stack/model-id: {{ .Values.model | quote }}
+    inference-stack/gpus: {{ .Values.gpusPerReplica | quote }}
+    inference-stack/context: {{ .Values.maxModelLen | quote }}
+    inference-stack/simulate: {{ .Values.simulate | quote }}
 spec:
   replicas: {{ .Values.replicas }}
   selector:
@@ -21,6 +29,12 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8000"
     spec:
+      {{- if not .Values.simulate }}
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      {{- end }}
       containers:
         - name: vllm
           ports:
@@ -34,7 +48,7 @@ spec:
           args: ["--model", {{ .Values.model | quote }}, "--port", "8000"]
           {{- else }}
           image: {{ .Values.vllmImage }}
-          command: ["vllm", "serve", {{ .Values.model | quote }}, "--port", "8000"]
+          command: ["vllm", "serve", {{ .Values.model | quote }}, "--port", "8000", "--tensor-parallel-size", {{ .Values.gpusPerReplica | quote }}, "--max-model-len", {{ .Values.maxModelLen | quote }}]
           resources:
             limits:
               nvidia.com/gpu: {{ .Values.gpusPerReplica }}

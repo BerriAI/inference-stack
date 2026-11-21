@@ -1,0 +1,8 @@
+{{- if .Values.litellm.db.deployStandalone }}
+{{- range $key := list "password" "postgres-password" }}
+{{- $password := index $.Values.litellm.postgresql.auth $key | default "" }}
+{{- if or (lt (len $password) 20) (contains "change-me" (lower $password)) (contains "notagreatpassword" (lower $password)) }}
+{{- fail (printf "Set litellm.postgresql.auth.%s to a generated password of at least 20 characters. See the Kubernetes setup instructions." $key) }}
+{{- end }}
+{{- end }}
+{{- end }}

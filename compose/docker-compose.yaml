@@ -3,10 +3,22 @@ name: inference-stack
 services:
   postgres:
     image: postgres:16
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if [ "$${#POSTGRES_PASSWORD}" -lt 20 ]; then
+          echo "POSTGRES_PASSWORD must be a generated password of at least 20 characters." >&2
+          exit 1
+        fi
+        case "$$POSTGRES_PASSWORD" in
+          *change-me*|*changeme*|*NoTaGrEaTpAsSwOrD*) echo "Replace the example database password." >&2; exit 1 ;;
+        esac
+        exec docker-entrypoint.sh postgres
     environment:
       POSTGRES_DB: litellm
       POSTGRES_USER: litellm
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a generated password}
     volumes:
       - postgres:/var/lib/postgresql/data
     healthcheck:
@@ -18,8 +30,8 @@ services:
     image: ghcr.io/berriai/litellm:main-stable
     command: ["--config", "/app/config/config.yaml", "--port", "4000"]
     environment:
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
-      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY to a generated password}
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a generated password}@postgres:5432/litellm
     volumes:
       - ./litellm/config.yaml:/app/config/config.yaml:ro
       - ../charts/inference-stack/files/llmd_headers.py:/app/config/llmd_headers.py:ro
@@ -30,13 +42,16 @@ services:
         condition: service_healthy
 
   launcher:
-    build: ../launcher
+    build:
+      context: ..
+      dockerfile: launcher/Dockerfile
     environment:
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY to a generated password}
       HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - router-state:/state
+      - ./router/epp-config.yaml:/config/epp-config.yaml:ro
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
@@ -47,7 +62,7 @@ services:
   epp:
     image: ghcr.io/llm-d/llm-d-router-endpoint-picker:v1.0.0
     command:
-      - --config-file=/config/epp-config.yaml
+      - --config-file=/state/epp-config.yaml
       - --pool-name=inference-stack
       - --pool-namespace=default
       - --grpc-port=9002
@@ -56,7 +71,6 @@ services:
       - --secure-serving=false
       - --health-checking=true
     volumes:
-      - ./router/epp-config.yaml:/config/epp-config.yaml:ro
       - router-state:/state:ro
     depends_on:
       launcher:

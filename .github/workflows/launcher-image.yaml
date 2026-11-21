@@ -3,7 +3,7 @@ name: launcher-image
 on:
   push:
     branches: [main]
-    paths: [launcher/**]
+    paths: [launcher/**, charts/model/**, .github/workflows/launcher-image.yaml]
 
 permissions:
   contents: read
@@ -21,6 +21,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
-          context: launcher
+          context: .
+          file: launcher/Dockerfile
           push: true
           tags: ghcr.io/berriai/inference-stack-launcher:main

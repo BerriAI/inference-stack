@@ -1,31 +1,56 @@
+{{- range $action := list "register" "unregister" }}
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ .Release.Name }}-register
+  name: {{ $.Release.Name }}-{{ $action }}
   annotations:
-    helm.sh/hook: post-install
+    helm.sh/hook: {{ if eq $action "register" }}post-install,post-upgrade{{ else }}post-delete{{ end }}
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
-  backoffLimit: 10
+  backoffLimit: 5
+  activeDeadlineSeconds: 300
   template:
     spec:
       restartPolicy: OnFailure
       containers:
-        - name: register
-          image: curlimages/curl:8.11.1
+        - name: {{ $action }}
+          image: python:3.12-slim
           env:
             - name: LITELLM_MASTER_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.stackRelease }}-litellm-masterkey
+                  name: {{ $.Values.stackRelease }}-litellm-masterkey
                   key: masterkey
-          command:
-            - curl
-            - --fail
-            - http://{{ .Values.stackRelease }}-litellm:4000/model/new
-            - --header
-            - "Authorization: Bearer $(LITELLM_MASTER_KEY)"
-            - --header
-            - "Content-Type: application/json"
-            - --data
-            - {{ dict "model_name" .Release.Name "litellm_params" (dict "model" (printf "hosted_vllm/%s" .Values.model) "api_base" (printf "http://%s-epp:8081/v1" .Release.Name)) | toJson | quote }}
+            - name: LITELLM_URL
+              value: http://{{ $.Values.stackRelease }}-litellm:4000
+            - name: MODEL_NAME
+              value: {{ $.Release.Name | quote }}
+            - name: MODEL_ID
+              value: {{ $.Values.model | quote }}
+            - name: ROUTER_URL
+              value: http://{{ $.Release.Name }}-epp:8081/v1
+            - name: ACTION
+              value: {{ $action }}
+          command: [python, -c]
+          args:
+            - |
+              import json, os, urllib.request
+              def call(path, body=None):
+                  data = json.dumps(body).encode() if body is not None else None
+                  request = urllib.request.Request(os.environ["LITELLM_URL"] + path, data=data,
+                      headers={"Authorization": "Bearer " + os.environ["LITELLM_MASTER_KEY"], "Content-Type": "application/json"})
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      return json.load(response)
+              try:
+                  name = os.environ["MODEL_NAME"]
+                  matches = [m for m in call("/model/info")["data"] if m["model_name"] == name]
+                  if os.environ["ACTION"] == "unregister":
+                      for model in matches:
+                          call("/model/delete", {"id": model["model_info"]["id"]})
+                  elif not matches:
+                      call("/model/new", {"model_name": name, "litellm_params": {
+                          "model": "hosted_vllm/" + os.environ["MODEL_ID"], "api_base": os.environ["ROUTER_URL"]}})
+              except Exception:
+                  raise SystemExit("LiteLLM registration failed; check gateway availability and the configured secret.")
+{{- end }}
