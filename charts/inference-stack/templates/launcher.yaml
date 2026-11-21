@@ -11,17 +11,34 @@ spec:
       labels:
         app: inference-stack-launcher
     spec:
+      serviceAccountName: {{ .Release.Name }}-launcher
       containers:
         - name: launcher
           image: {{ .Values.launcher.image }}
           imagePullPolicy: {{ .Values.launcher.imagePullPolicy }}
           ports:
             - containerPort: 8080
+          volumeMounts:
+            - name: state
+              mountPath: /state
           readinessProbe:
             httpGet:
               path: /healthz
               port: 8080
           env:
+            - name: LITELLM_PUBLIC_URL
+              value: {{ .Values.launcher.litellmPublicUrl | quote }}
+            - name: GRAFANA_PUBLIC_URL
+              value: {{ .Values.launcher.grafanaPublicUrl | quote }}
+            - name: HF_SECRET
+              value: {{ .Values.launcher.huggingFaceSecret | quote }}
+            {{- if .Values.launcher.huggingFaceSecret }}
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.launcher.huggingFaceSecret }}
+                  key: HF_TOKEN
+            {{- end }}
             - name: MODE
               value: kubernetes
             - name: LITELLM_URL
@@ -39,6 +56,9 @@ spec:
               value: {{ .Release.Namespace }}
             - name: HELM_STACK_RELEASE
               value: {{ .Release.Name }}
+      volumes:
+        - name: state
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

@@ -1,0 +1,27 @@
+name: checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r launcher/requirements.txt
+      - run: node --check launcher/static/app.js
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - run: |
+          helm dependency build charts/model
+          helm dependency build charts/inference-stack
+          helm lint charts/inference-stack --set-string litellm.postgresql.auth.password=test-only-database-password-0123456789 --set-string litellm.postgresql.auth.postgres-password=test-only-database-admin-0123456789
+          helm lint charts/model --set model=Qwen/Qwen3-0.6B --set llm-d-router-standalone.router.modelServers.matchLabels.model=test-release
+      - run: python -m unittest discover -s tests
+      - run: docker build -f launcher/Dockerfile -t inference-stack-launcher:test .
