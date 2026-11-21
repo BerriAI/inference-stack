@@ -66,6 +66,8 @@ To stop: remove the model in the launcher, then `docker compose down`.
 Needs a cluster with GPU nodes and the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html).
 
 ```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add grafana https://grafana.github.io/helm-charts
 helm dependency build charts/inference-stack
 POSTGRES_PASSWORD="$(openssl rand -hex 24)"
 POSTGRES_ADMIN_PASSWORD="$(openssl rand -hex 24)"
@@ -86,7 +88,8 @@ Open **vLLM** and choose a model. The launcher uses its service account to insta
 the bundled model chart in this namespace. Helm waits for vLLM and llm-d, then
 registers the model in LiteLLM. The model page shows **Ready** after registration
 and readiness checks succeed. Removing a model uninstalls its release and removes
-its LiteLLM registration.
+its LiteLLM registration. Redeploying an existing model releases its GPUs before
+starting replacement replicas, so requests pause during that update.
 
 Forward the existing dashboards in separate terminals to use their cards:
 

@@ -12,6 +12,7 @@ from pathlib import Path
 import httpx
 import yaml
 
+import litellm_client
 import settings
 
 SERVICE_ACCOUNT = Path("/var/run/secrets/kubernetes.io/serviceaccount")
@@ -100,26 +101,67 @@ def gpu_inventory(exclude_model: str = "") -> dict:
         return {"count": None, "devices": [], "error": "GPU capacity is unknown. Node and pod read access is needed to check allocation."}
 
 
-def models() -> list[dict]:
+def legacy_model(row: dict, registered: list[dict]) -> dict | None:
+    """Recognize old chart releases through this stack's LiteLLM registration."""
+    metadata = row["metadata"]
+    annotations = metadata.get("annotations", {})
+    name = annotations.get("meta.helm.sh/release-name")
+    if (not name or metadata["name"] != f"{name}-vllm"
+            or metadata.get("labels", {}).get("app.kubernetes.io/managed-by") != "Helm"
+            or annotations.get("meta.helm.sh/release-namespace") != settings.HELM_NAMESPACE
+            or row["spec"].get("selector", {}).get("matchLabels", {}).get("model") != name):
+        return None
+    container = next((c for c in row["spec"]["template"]["spec"]["containers"] if c["name"] == "vllm"), {})
+    command = container.get("command", [])
+    args = container.get("args", [])
+    simulate = len(args) >= 2 and args[0] == "--model"
+    if simulate:
+        model = args[1]
+    elif len(command) >= 3 and command[:2] == ["vllm", "serve"]:
+        model = command[2]
+    else:
+        return None
+    if not any(m["name"] == name and m["served_model"] == model
+               and m.get("api_base") == f"http://{name}-epp:8081/v1" for m in registered):
+        return None
+    return {"name": name, "served_model": model, "simulate": simulate, "context": None,
+            "gpus_per_replica": int(container.get("resources", {}).get("limits", {}).get("nvidia.com/gpu", 1))}
+
+
+def models(registered: list[dict] | None = None) -> list[dict]:
     rows = api("GET", resource_path("deployments", "apps"))["items"]
     result = []
     by_name = {row["metadata"]["name"]: row for row in rows}
     for row in rows:
         metadata = row["metadata"]
         labels = metadata.get("labels", {})
-        if labels.get("inference-stack/stack") != settings.HELM_STACK_RELEASE:
+        stack = labels.get("inference-stack/stack")
+        if stack and stack != settings.HELM_STACK_RELEASE:
             continue
-        spec = row["spec"]
         annotations = metadata.get("annotations", {})
-        name = labels["inference-stack/model"]
+        if stack:
+            model = {"name": labels["inference-stack/model"], "served_model": annotations["inference-stack/model-id"],
+                     "gpus_per_replica": int(annotations.get("inference-stack/gpus", 1)),
+                     "context": int(annotations.get("inference-stack/context", 4096)),
+                     "simulate": annotations.get("inference-stack/simulate") == "true"}
+        else:
+            if not metadata["name"].endswith("-vllm"):
+                continue
+            if registered is None:
+                try:
+                    registered = litellm_client.list_models()
+                except httpx.HTTPError:
+                    registered = []
+            model = legacy_model(row, registered)
+            if not model:
+                continue
+        name = model["name"]
+        spec = row["spec"]
         router = by_name.get(f"{name}-epp", {})
         observed = row.get("status", {}).get("observedGeneration", 0) >= metadata.get("generation", 1)
         ready = row.get("status", {}).get("readyReplicas", 0) if observed else 0
-        result.append({"name": name, "served_model": annotations["inference-stack/model-id"],
+        result.append({**model,
                        "replicas": spec.get("replicas", 1), "ready": ready,
-                       "gpus_per_replica": int(annotations.get("inference-stack/gpus", 1)),
-                       "context": int(annotations.get("inference-stack/context", 4096)),
-                       "simulate": annotations.get("inference-stack/simulate") == "true",
                        "router_ready": router.get("status", {}).get("readyReplicas", 0) > 0})
     return result
 
