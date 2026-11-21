@@ -88,7 +88,8 @@ Open **vLLM** and choose a model. The launcher uses its service account to insta
 the bundled model chart in this namespace. Helm waits for vLLM and llm-d, then
 registers the model in LiteLLM. The model page shows **Ready** after registration
 and readiness checks succeed. Removing a model uninstalls its release and removes
-its LiteLLM registration.
+its LiteLLM registration. Redeploying an existing model releases its GPUs before
+starting replacement replicas, so requests pause during that update.
 
 Forward the existing dashboards in separate terminals to use their cards:
 
