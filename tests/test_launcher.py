@@ -1,3 +1,4 @@
+import copy
 import os
 from pathlib import Path
 import sys
@@ -49,6 +50,66 @@ class LauncherTests(unittest.TestCase):
         uninstall.assert_called_once_with("example")
         unregister.assert_called_once_with("example")
         self.assertFalse(app.deployment["error"])
+
+    def test_legacy_kubernetes_models_remain_visible_and_removable(self):
+        name = "legacy-model"
+        server = {
+            "metadata": {"name": f"{name}-vllm", "generation": 1,
+                         "labels": {"app.kubernetes.io/managed-by": "Helm"},
+                         "annotations": {"meta.helm.sh/release-name": name,
+                                         "meta.helm.sh/release-namespace": app.settings.HELM_NAMESPACE}},
+            "spec": {"replicas": 2, "selector": {"matchLabels": {"model": name}},
+                     "template": {"spec": {"containers": [{"name": "vllm",
+                         "command": ["vllm", "serve", "org/legacy-model", "--port", "8000"],
+                         "resources": {"limits": {"nvidia.com/gpu": 1}}}]}}},
+            "status": {"observedGeneration": 1, "readyReplicas": 2},
+        }
+        router = {"metadata": {"name": f"{name}-epp"}, "status": {"readyReplicas": 1}}
+        registered = [{"name": name, "served_model": "org/legacy-model",
+                       "api_base": f"http://{name}-epp:8081/v1"}]
+        with patch.object(app.settings, "MODE", "kubernetes"), \
+             patch.object(app.kubernetes, "api", return_value={"items": [server, router]}), \
+             patch.object(app.litellm_client, "list_models", return_value=registered), \
+             patch.object(app, "is_healthy", return_value=True), \
+             patch.object(app, "gpu_inventory", return_value={"count": 2, "devices": []}), \
+             patch.object(app.kubernetes, "permissions", return_value={"read": True, "deploy": False}):
+            rows = self.client.get("/api/status").json()["models"]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["name"], name)
+            self.assertEqual(rows[0]["status"], "ready")
+            self.assertEqual(rows[0]["replicas"], 2)
+            response = self.client.delete(f"/api/models/{name}")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(f"helm uninstall {name}", response.json()["command"])
+            with patch.object(app.kubernetes, "permissions", return_value={"read": True, "deploy": True}), \
+                 patch.object(app.kubernetes, "remove") as uninstall, \
+                 patch.object(app.litellm_client, "remove_model") as unregister:
+                self.assertEqual(self.client.delete(f"/api/models/{name}").status_code, 200)
+                uninstall.assert_called_once_with(name)
+                unregister.assert_called_once_with(name)
+
+            simulated = copy.deepcopy(server)
+            simulated["spec"]["template"]["spec"]["containers"] = [
+                {"name": "vllm", "args": ["--model", "org/legacy-model", "--port", "8000"]}]
+            with patch.object(app.kubernetes, "api", return_value={"items": [simulated, router]}):
+                self.assertTrue(self.client.get("/api/status").json()["models"][0]["simulate"])
+
+            # Similar deployments from other installations must not be adopted.
+            for change in ("stack", "helm", "endpoint", "model"):
+                with self.subTest(change=change):
+                    other = copy.deepcopy(server)
+                    registration = copy.deepcopy(registered)
+                    if change == "stack":
+                        other["metadata"]["labels"]["inference-stack/stack"] = "another-stack"
+                    elif change == "helm":
+                        other["metadata"]["annotations"]["meta.helm.sh/release-name"] = "different"
+                    elif change == "endpoint":
+                        registration[0]["api_base"] = "https://example.com/v1"
+                    else:
+                        registration[0]["served_model"] = "org/different-model"
+                    with patch.object(app.kubernetes, "api", return_value={"items": [other, router]}), \
+                         patch.object(app.litellm_client, "list_models", return_value=registration):
+                        self.assertEqual(self.client.get("/api/status").json()["models"], [])
 
     def test_duplicate_deployment_does_not_start_work(self):
         app.operation_lock.acquire()

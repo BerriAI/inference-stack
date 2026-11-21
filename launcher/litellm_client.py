@@ -16,6 +16,7 @@ def list_models() -> list[dict]:
             "name": row["model_name"],
             "id": row["model_info"]["id"],
             "served_model": row["litellm_params"]["model"].removeprefix("hosted_vllm/"),
+            "api_base": row["litellm_params"].get("api_base", ""),
         }
         for row in rows
     ]

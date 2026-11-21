@@ -119,9 +119,9 @@ def gpu_inventory() -> dict:
     return inventory(int(time.monotonic() // 30))
 
 
-def model_servers() -> list[dict]:
+def model_servers(registered: list[dict] | None = None) -> list[dict]:
     if settings.MODE == "kubernetes":
-        return kubernetes.models()
+        return kubernetes.models(registered)
     row = compose_backend.running_model()
     return [{**row, "name": public_name(row["served_model"]), "router_ready": is_healthy(settings.ROUTER_HEALTH_URL)}] if row else []
 
@@ -145,7 +145,7 @@ def status() -> dict:
         registered = []
         components["litellm"]["healthy"] = False
     try:
-        rows = model_servers()
+        rows = model_servers(registered)
     except Exception:
         rows = []
         errors.append("Could not read model deployments. Check installation access, then retry.")
