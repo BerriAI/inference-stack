@@ -21,6 +21,9 @@ class ChartTests(unittest.TestCase):
                 text=True, capture_output=True, timeout=20, check=True,
             )
             resources = [r for r in yaml.safe_load_all(result.stdout) if r]
+            server = next(r for r in resources if r["kind"] == "Deployment" and r["metadata"]["name"] == f"{name}-vllm")
+            # Allocation validation reuses this model's GPUs; updates must release them first.
+            self.assertEqual(server["spec"]["strategy"]["type"], "Recreate")
             configs = {r["metadata"]["name"] for r in resources if r["kind"] == "ConfigMap"}
             self.assertTrue(configs)
             self.assertTrue(all(config.startswith(name) for config in configs))
