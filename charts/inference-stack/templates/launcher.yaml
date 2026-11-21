@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-stack-launcher
+spec:
+  selector:
+    matchLabels:
+      app: inference-stack-launcher
+  template:
+    metadata:
+      labels:
+        app: inference-stack-launcher
+    spec:
+      containers:
+        - name: launcher
+          image: {{ .Values.launcher.image }}
+          imagePullPolicy: {{ .Values.launcher.imagePullPolicy }}
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          env:
+            - name: MODE
+              value: kubernetes
+            - name: LITELLM_URL
+              value: http://{{ .Release.Name }}-litellm:4000
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-litellm-masterkey
+                  key: masterkey
+            - name: GRAFANA_URL
+              value: http://inference-stack-grafana
+            - name: HELM_MODEL_CHART
+              value: {{ .Values.launcher.modelChart }}
+            - name: HELM_NAMESPACE
+              value: {{ .Release.Namespace }}
+            - name: HELM_STACK_RELEASE
+              value: {{ .Release.Name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inference-stack-launcher
+spec:
+  selector:
+    app: inference-stack-launcher
+  ports:
+    - port: 8080

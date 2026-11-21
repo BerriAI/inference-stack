@@ -1,0 +1,55 @@
+{{- if not .Values.model }}
+{{- fail "Set the model, for example --set model=Qwen/Qwen3-8B" }}
+{{- end }}
+{{- if ne (index .Values "llm-d-router-standalone").router.modelServers.matchLabels.model .Release.Name }}
+{{- fail (printf "Add --set llm-d-router-standalone.router.modelServers.matchLabels.model=%s" .Release.Name) }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-vllm
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      model: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        model: {{ .Release.Name }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      containers:
+        - name: vllm
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+          {{- if .Values.simulate }}
+          image: {{ .Values.simulatorImage }}
+          args: ["--model", {{ .Values.model | quote }}, "--port", "8000"]
+          {{- else }}
+          image: {{ .Values.vllmImage }}
+          command: ["vllm", "serve", {{ .Values.model | quote }}, "--port", "8000"]
+          resources:
+            limits:
+              nvidia.com/gpu: {{ .Values.gpusPerReplica }}
+          {{- with .Values.huggingFaceSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ . }}
+          {{- end }}
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+          {{- end }}
+      {{- if not .Values.simulate }}
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+      {{- end }}

@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: litellm
+    metrics_path: /metrics/
+    static_configs:
+      - targets: ["litellm:4000"]
+  - job_name: llm-d-router
+    static_configs:
+      - targets: ["epp:9090"]
+  - job_name: vllm
+    file_sd_configs:
+      - files: ["/state/model-servers.json"]
+        refresh_interval: 5s

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Inference Stack</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Inference Stack</h1>
+    <p>LiteLLM, llm-d and vLLM, running together.</p>
+  </header>
+
+  <section id="components" class="tiles"></section>
+
+  <section class="card">
+    <h2>Models</h2>
+    <div id="models"></div>
+    <p id="deployment" class="note"></p>
+    <form id="add-model">
+      <select name="model" id="catalog"></select>
+      <label>Replicas <input name="replicas" type="number" min="1" max="8" value="1"></label>
+      <label><input name="simulate" type="checkbox"> Simulate (no GPU)</label>
+      <button>Add model</button>
+    </form>
+    <pre id="command" hidden></pre>
+  </section>
+
+  <section class="card">
+    <h2>Try it</h2>
+    <form id="chat">
+      <input name="message" placeholder="Say something" required>
+      <button>Send</button>
+    </form>
+    <pre id="reply" hidden></pre>
+  </section>
+
+  <section class="card">
+    <h2>Use it from your code</h2>
+    <button id="create-key">Create an API key</button>
+    <pre id="snippet" hidden></pre>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
