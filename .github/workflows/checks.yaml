@@ -19,6 +19,8 @@ jobs:
         with:
           version: v3.17.3
       - run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add grafana https://grafana.github.io/helm-charts
           helm dependency build charts/model
           helm dependency build charts/inference-stack
           helm lint charts/inference-stack --set-string litellm.postgresql.auth.password=test-only-database-password-0123456789 --set-string litellm.postgresql.auth.postgres-password=test-only-database-admin-0123456789

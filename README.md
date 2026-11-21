@@ -66,6 +66,8 @@ To stop: remove the model in the launcher, then `docker compose down`.
 Needs a cluster with GPU nodes and the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html).
 
 ```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add grafana https://grafana.github.io/helm-charts
 helm dependency build charts/inference-stack
 POSTGRES_PASSWORD="$(openssl rand -hex 24)"
 POSTGRES_ADMIN_PASSWORD="$(openssl rand -hex 24)"
