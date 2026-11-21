@@ -53,7 +53,9 @@ def helm_command(request: AddModel) -> str:
 
 def deploy_on_compose(request: AddModel) -> None:
     try:
-        deployment.update(step="Starting model servers", error="")
+        deployment.update(step="Downloading the model server image", error="")
+        compose_backend.pull_image(request.simulate)
+        deployment["step"] = "Starting model servers"
         compose_backend.start_model_servers(request.model, request.replicas, request.simulate)
         deployment["step"] = "Loading model weights"
         compose_backend.wait_until_ready()

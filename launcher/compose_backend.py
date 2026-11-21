@@ -73,6 +73,16 @@ def remove_model_servers() -> None:
     publish_endpoints()
 
 
+def pull_image(simulate: bool) -> None:
+    """Download the model server image, raising the registry's own error if it fails."""
+    image = settings.SIMULATOR_IMAGE if simulate else settings.VLLM_IMAGE
+    if _docker().images.list(name=image):
+        return
+    for event in _docker().api.pull(image, stream=True, decode=True):
+        if "error" in event:
+            raise RuntimeError(f"Could not download {image}: {event['error']}")
+
+
 def start_model_servers(served_model: str, replicas: int, simulate: bool) -> None:
     remove_model_servers()
     for index in range(replicas):
