@@ -63,7 +63,7 @@ def running_model() -> dict | None:
 def _is_ready(container) -> bool:
     try:
         return httpx.get(f"http://{_address(container)}:{PORT}/health", timeout=2).status_code == 200
-    except (httpx.HTTPError, KeyError):
+    except (httpx.HTTPError, KeyError, docker.errors.NotFound):
         return False
 
 

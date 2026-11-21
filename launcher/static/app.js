@@ -1,5 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 let status = { models: [] };
+let apiKey = null;
 
 async function api(method, path, body) {
   const response = await fetch(path, {
@@ -8,7 +9,10 @@ async function api(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || response.statusText);
+  if (!response.ok) {
+    const detail = Array.isArray(data.detail) ? data.detail.map((d) => d.msg).join(", ") : data.detail;
+    throw new Error(detail || response.statusText);
+  }
   return data;
 }
 
@@ -51,23 +55,32 @@ function render() {
       .map((m) => `<option value="${m.id}">${m.id} (${m.vram_gb} GB GPU)</option>`).join("");
     $("#add-model [name=simulate]").checked = !status.gpu;
   }
+  renderSnippet();
 }
 
 async function refresh() {
-  status = await api("GET", "/api/status");
-  render();
+  try {
+    status = await api("GET", "/api/status");
+    render();
+  } catch (error) {
+    console.warn("Status refresh failed", error);
+  }
 }
 
 $("#add-model").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.target);
-  const result = await api("POST", "/api/models", {
-    model: form.get("model"),
-    replicas: Number(form.get("replicas")),
-    simulate: form.get("simulate") === "on",
-  });
-  if (result.command) show($("#command"), `Run this in your cluster, then the model appears here:\n\n${result.command}`);
-  refresh();
+  try {
+    const result = await api("POST", "/api/models", {
+      model: form.get("model"),
+      replicas: Number(form.get("replicas")),
+      simulate: form.get("simulate") === "on",
+    });
+    if (result.command) show($("#command"), `Run this in your cluster, then the model appears here:\n\n${result.command}`);
+    refresh();
+  } catch (error) {
+    show($("#command"), error.message);
+  }
 });
 
 $("#models").addEventListener("click", async (event) => {
@@ -90,13 +103,18 @@ $("#chat").addEventListener("submit", async (event) => {
   }
 });
 
-$("#create-key").addEventListener("click", async () => {
-  const { key } = await api("POST", "/api/keys");
+function renderSnippet() {
+  if (!apiKey) return;
   const model = status.models[0]?.name ?? "<model>";
   show($("#snippet"), `curl ${status.litellm_public_url}/v1/chat/completions \\
-  -H "Authorization: Bearer ${key}" \\
+  -H "Authorization: Bearer ${apiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hello"}]}'`);
+}
+
+$("#create-key").addEventListener("click", async () => {
+  apiKey = (await api("POST", "/api/keys")).key;
+  renderSnippet();
 });
 
 refresh();
