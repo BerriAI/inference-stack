@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inference-stack-dashboards
+data:
+  {{- range $path, $_ := .Files.Glob "files/dashboards/**.json" }}
+  {{ base $path }}: |
+    {{- $.Files.Get $path | nindent 4 }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inference-stack-llmd-headers
+data:
+  llmd_headers.py: |
+    {{- .Files.Get "files/llmd_headers.py" | nindent 4 }}

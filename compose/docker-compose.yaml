@@ -1,0 +1,98 @@
+name: inference-stack
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      retries: 10
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    command: ["--config", "/app/config/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
+    volumes:
+      - ./litellm/config.yaml:/app/config/config.yaml:ro
+      - ../charts/inference-stack/files/llmd_headers.py:/app/config/llmd_headers.py:ro
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  launcher:
+    build: ../launcher
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - router-state:/state
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 3s
+      retries: 20
+
+  epp:
+    image: ghcr.io/llm-d/llm-d-router-endpoint-picker:v1.0.0
+    command:
+      - --config-file=/config/epp-config.yaml
+      - --pool-name=inference-stack
+      - --pool-namespace=default
+      - --grpc-port=9002
+      - --grpc-health-port=9003
+      - --metrics-port=9090
+      - --secure-serving=false
+      - --health-checking=true
+    volumes:
+      - ./router/epp-config.yaml:/config/epp-config.yaml:ro
+      - router-state:/state:ro
+    depends_on:
+      launcher:
+        condition: service_healthy
+
+  envoy:
+    image: envoyproxy/envoy:distroless-v1.33.2
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"]
+    volumes:
+      - ./router/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    depends_on:
+      - epp
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - router-state:/state:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../charts/inference-stack/files/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+
+networks:
+  default:
+    name: inference-stack
+
+volumes:
+  postgres:
+  router-state:

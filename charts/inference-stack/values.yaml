@@ -1,0 +1,70 @@
+launcher:
+  image: ghcr.io/berriai/inference-stack-launcher:main
+  imagePullPolicy: IfNotPresent
+  # Chart reference printed in the "helm install" command for a new model.
+  modelChart: charts/model
+
+litellm:
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "4000"
+    prometheus.io/path: /metrics/
+  proxy_config:
+    general_settings:
+      master_key: os.environ/PROXY_MASTER_KEY
+      store_model_in_db: true
+    litellm_settings:
+      require_auth_for_metrics_endpoint: false
+      callbacks:
+        - prometheus
+        - llmd_headers.llmd_headers
+  volumes:
+    - name: llmd-headers
+      configMap:
+        name: inference-stack-llmd-headers
+  volumeMounts:
+    - name: llmd-headers
+      mountPath: /etc/litellm/llmd_headers.py
+      subPath: llmd_headers.py
+
+prometheus:
+  alertmanager:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+  prometheus-node-exporter:
+    enabled: false
+  kube-state-metrics:
+    enabled: false
+  server:
+    fullnameOverride: inference-stack-prometheus
+    global:
+      scrape_interval: 15s
+    persistentVolume:
+      enabled: false
+
+grafana:
+  fullnameOverride: inference-stack-grafana
+  grafana.ini:
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          uid: prometheus
+          type: prometheus
+          url: http://inference-stack-prometheus
+          isDefault: true
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: inference-stack
+          type: file
+          options:
+            path: /var/lib/grafana/dashboards/inference-stack
+  dashboardsConfigMaps:
+    inference-stack: inference-stack-dashboards

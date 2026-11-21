@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-register
+  annotations:
+    helm.sh/hook: post-install
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: register
+          image: curlimages/curl:8.11.1
+          env:
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.stackRelease }}-litellm-masterkey
+                  key: masterkey
+          command:
+            - curl
+            - --fail
+            - http://{{ .Values.stackRelease }}-litellm:4000/model/new
+            - --header
+            - "Authorization: Bearer $(LITELLM_MASTER_KEY)"
+            - --header
+            - "Content-Type: application/json"
+            - --data
+            - {{ dict "model_name" .Release.Name "litellm_params" (dict "model" (printf "hosted_vllm/%s" .Values.model) "api_base" (printf "http://%s-epp:8081/v1" .Release.Name)) | toJson | quote }}
