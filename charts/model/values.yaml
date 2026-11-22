@@ -30,6 +30,8 @@ llm-d-router-standalone:
           enabled: false
     # Sized for small clusters. Raise both for production traffic.
     epp:
+      flags:
+        feature-gates: flowControl=true
       podAnnotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9090"

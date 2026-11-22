@@ -22,7 +22,7 @@ All published ports bind to `127.0.0.1`. The launcher controls Docker, so keep l
 
 ## Kubernetes
 
-Use this path for a cluster. You need Helm, `kubectl`, curl, OpenSSL, and permission to install the stack's resources. Confirm that `kubectl config current-context` selects the intended cluster. Real models need GPU nodes with the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html). Simulation does not require GPUs.
+Use this path for a cluster. You need Helm 3.14 or later, `kubectl`, curl, OpenSSL, and permission to install the stack's resources. Confirm that `kubectl config current-context` selects the intended cluster. Real models need GPU nodes with the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html). Simulation does not require GPUs.
 
 ```bash
 curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.3.0/install.sh | bash -s -- kubernetes
@@ -135,6 +135,8 @@ To use a separate launcher password, set `LAUNCHER_PASSWORD` in the launcher's c
 ### Routing, teams, and fairness
 
 Routing works as soon as a model is deployed. Under **Replica scheduling → Settings**, adjust prefix-cache and queue-depth weights for a model. Other scorers are preserved. Applying changes restarts the router and can briefly pause requests. Custom policies without these scorers stay managed through their existing configuration.
+
+Flow control queues requests in llm-d while replicas are saturated. The upstream default limits queue waits to 60 seconds. Keep the router’s access to model metrics working; stale metrics pause dispatch.
 
 Create teams and keys in LiteLLM. Requests carry the team's `x-llm-d-inference-fairness-id` header to llm-d, which can use it to share capacity between teams. See [the header callback](../charts/inference-stack/files/llmd_headers.py).
 
