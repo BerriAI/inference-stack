@@ -1,16 +1,16 @@
 <div align="center">
 
-<p>
-  <a href="https://huggingface.co/models"><img src="assets/hugging-face.svg" alt="Hugging Face" width="48" height="48"></a>&nbsp;&nbsp;&nbsp;
-  <a href="https://github.com/vllm-project/vllm"><img src="launcher/static/logos/vllm.png" alt="vLLM" width="46" height="48"></a>&nbsp;&nbsp;&nbsp;
-  <a href="https://github.com/llm-d/llm-d"><img src="launcher/static/logos/llmd.png" alt="llm-d" width="42" height="48"></a>&nbsp;&nbsp;&nbsp;
-  <a href="https://github.com/BerriAI/litellm"><img src="launcher/static/logos/litellm.svg" alt="LiteLLM" width="48" height="48"></a>&nbsp;&nbsp;&nbsp;
-  <a href="https://grafana.com/oss/grafana/"><img src="launcher/static/logos/grafana.svg" alt="Grafana" width="46" height="48"></a>
-</p>
-
 # Inference Stack
 
 ### Everything you need to own your inference. Deploy with one command.
+
+<p>
+  <a href="https://huggingface.co/models"><img src="assets/hugging-face.svg" alt="Hugging Face" height="40"></a>&nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/vllm-project/vllm"><img src="launcher/static/logos/vllm.png" alt="vLLM" height="40"></a>&nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/llm-d/llm-d"><img src="launcher/static/logos/llmd.png" alt="llm-d" height="40"></a>&nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/BerriAI/litellm"><img src="launcher/static/logos/litellm.svg" alt="LiteLLM" height="40"></a>&nbsp;&nbsp;&nbsp;
+  <a href="https://grafana.com/oss/grafana/"><img src="launcher/static/logos/grafana.svg" alt="Grafana" height="40"></a>
+</p>
 
 **[Set up with Docker](#docker-compose)** &nbsp; · &nbsp; **[Set up with Kubernetes](#kubernetes)**
 
