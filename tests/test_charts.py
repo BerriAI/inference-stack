@@ -65,6 +65,8 @@ class ChartTests(unittest.TestCase):
             self.assertTrue(configs)
             self.assertTrue(all(config.startswith(name) for config in configs))
             router = next(r for r in resources if r["kind"] == "Deployment" and r["metadata"]["name"] == f"{name}-epp")
+            epp = next(c for c in router["spec"]["template"]["spec"]["containers"] if c["name"] == "epp")
+            self.assertIn("--feature-gates=flowControl=true", epp["args"])
             for volume in router["spec"]["template"]["spec"].get("volumes", []):
                 if "configMap" in volume:
                     self.assertIn(volume["configMap"]["name"], configs)

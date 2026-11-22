@@ -31,5 +31,20 @@ jobs:
           helm dependency build charts/inference-stack
           helm lint charts/inference-stack --set-string litellm.postgresql.auth.password=test-only-database-password-0123456789 --set-string litellm.postgresql.auth.postgres-password=test-only-database-admin-0123456789
           helm lint charts/model --set model=Qwen/Qwen3-0.6B --set llm-d-router-standalone.router.modelServers.matchLabels.model=test-release
+      - name: Create a disposable cluster for Helm upgrade tests
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSLO https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64
+          curl -fsSLO https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64.sha256sum
+          sha256sum --check kind-linux-amd64.sha256sum
+          chmod +x kind-linux-amd64
+          ./kind-linux-amd64 create cluster --name inference-stack-upgrade-tests --kubeconfig "$RUNNER_TEMP/upgrade-tests.kubeconfig" --wait 60s
+          echo "INFERENCE_STACK_TEST_KUBECONFIG=$RUNNER_TEMP/upgrade-tests.kubeconfig" >> "$GITHUB_ENV"
       - run: python -m unittest discover -s tests
+      - name: Remove the disposable cluster
+        if: always()
+        run: |
+          if [[ -x "$RUNNER_TEMP/kind-linux-amd64" ]]; then
+            "$RUNNER_TEMP/kind-linux-amd64" delete cluster --name inference-stack-upgrade-tests
+          fi
       - run: docker build -f launcher/Dockerfile -t inference-stack-launcher:test .

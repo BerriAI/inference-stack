@@ -74,6 +74,7 @@ services:
     image: ghcr.io/llm-d/llm-d-router-endpoint-picker:v1.0.0
     command:
       - --config-file=/state/epp-config.yaml
+      - --feature-gates=flowControl=true
       - --pool-name=inference-stack
       - --pool-namespace=default
       - --grpc-port=9002
