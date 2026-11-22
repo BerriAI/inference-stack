@@ -28,7 +28,22 @@ class InstallerTests(unittest.TestCase):
         for name, body in {
             'docker': 'echo "$*" >> "$CALLS"\n',
             'helm': 'echo "$*" >> "$CALLS"\ncase " $* " in *" --all "*) echo "unknown flag: --all" >&2; exit 1;; esac\nif [ "$1" = list ]; then\n [ "${HELM_DENIED:-}" != yes ] || exit 1\n [ "${HELM_EXISTS:-}" != yes ] || echo inference-stack\nfi\n',
-            'kubectl': 'echo "$*" >> "$CALLS"\nif [ "$1" = port-forward ]; then exec sleep 30; fi\n',
+            'kubectl': '''echo "$*" >> "$CALLS"
+if [ "$1" = get ] && [ "$2" = pods ]; then
+  [ "${NO_PROXY_POD:-}" != yes ] || exit 0
+  case "$*" in
+    *pod-template-hash*) echo pod/inference-stack-litellm-proxy;;
+    *) echo pod/inference-stack-litellm-migrations;;
+  esac
+fi
+if [ "$1" = port-forward ]; then
+  case "$*" in
+    *svc/inference-stack-litellm*|*pod/inference-stack-litellm-migrations*)
+      echo "error: migration pod does not have a named port http" >&2; exit 1;;
+  esac
+  exec sleep 30
+fi
+''',
         }.items():
             self.tool(name, body)
 
@@ -122,10 +137,20 @@ class InstallerTests(unittest.TestCase):
             calls = self.log.read_text()
             self.assertNotIn('install inference-stack', calls)
             self.assertEqual(calls.count('port-forward'), 3)
+            self.assertIn('port-forward --namespace inference pod/inference-stack-litellm-proxy 4000:4000', calls)
+            self.assertIn('wait --namespace inference --for=condition=Ready pod/inference-stack-litellm-proxy', calls)
         finally:
             if process.poll() is None:
                 process.kill()
                 process.communicate()
+
+    def test_missing_proxy_pod_fails_without_starting_connections(self):
+        self.checkout()
+        self.env.update(HELM_EXISTS='yes', NO_PROXY_POD='yes')
+        result = self.run_install('kubernetes')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('No running LiteLLM proxy pod found', result.stderr)
+        self.assertNotIn('port-forward', self.log.read_text())
 
 
 if __name__ == '__main__':
