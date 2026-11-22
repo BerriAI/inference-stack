@@ -1,187 +1,108 @@
-# inference-stack
+<div align="center">
 
-Run your own models behind one OpenAI-compatible endpoint.
+# Inference Stack
 
-- [vLLM](https://github.com/vllm-project/vllm) serves the model on your GPUs.
-- [llm-d](https://github.com/llm-d/llm-d) routes each request to the best vLLM replica (queue depth, KV cache, prefix cache).
-- [LiteLLM](https://github.com/BerriAI/litellm) is the gateway: keys, teams, budgets and spend.
-- Grafana shows all three in one place.
-- The launcher opens each tool and handles model deployment on this installation.
+### Everything you need to own your inference. Deploy with one command.
 
-```
-your app -> LiteLLM -> llm-d router -> vLLM replicas
-```
+<p>
+  <a href="https://huggingface.co/models"><img src="assets/hugging-face.svg" alt="Hugging Face" height="40"></a>&nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/vllm-project/vllm"><img src="launcher/static/logos/vllm.png" alt="vLLM" height="40"></a>&nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/llm-d/llm-d"><img src="launcher/static/logos/llmd.png" alt="llm-d" height="40"></a>&nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/BerriAI/litellm"><img src="launcher/static/logos/litellm.svg" alt="LiteLLM" height="40"></a>&nbsp;&nbsp;&nbsp;
+  <a href="https://grafana.com/oss/grafana/"><img src="launcher/static/logos/grafana.svg" alt="Grafana" height="40"></a>
+</p>
 
-## One machine (Docker Compose)
+**[Set up with Docker](#docker-compose)** &nbsp; · &nbsp; **[Set up with Kubernetes](#kubernetes)**
 
-Needs Docker. To serve real models you also need an NVIDIA GPU and the
-[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
-Without a GPU you can still try everything with a simulated model.
+<br>
 
-```bash
-git clone https://github.com/BerriAI/inference-stack && cd inference-stack/compose
-cp .env.example .env    # fill the two blank passwords with separate generated values
-# Generate each value locally with: openssl rand -hex 24
-docker compose up -d
-```
+<img src="assets/launcher.png" alt="Four entry points: vLLM, LiteLLM, llm-d and Grafana" width="100%">
 
-Open the launcher at http://localhost:8080. Sign in as `admin` using your
-`LITELLM_MASTER_KEY`, then choose **vLLM**, search Hugging Face,
-and select a model. Review its GPU allocation, then click **Deploy**. Replicas,
-context length and GPU simulation are under **Settings**. Simulation needs no GPU
-and returns canned responses.
+</div>
 
-When the model shows **Ready**, choose **Open LiteLLM** to send requests and manage
-keys and teams in the existing LiteLLM dashboard. **llm-d** shows replicas and
-routing settings; **Grafana** opens the stack overview. Both external dashboards
-open in a new tab.
+## From model to first request
 
-| What | URL |
-|---|---|
-| Launcher | http://localhost:8080 |
-| LiteLLM API and UI | http://localhost:4000 (UI at `/ui`, login `admin` and your master key) |
-| Grafana | http://localhost:3000 |
+### vLLM
 
-The launcher detects GPU memory using the Docker host's NVIDIA runtime. GPU
-requirements are estimates, not a guarantee of vLLM compatibility. Each replica's
-GPUs must fit on one machine. Compose runs one model at a time: **Replace model**
-stops the previous model after the server image downloads.
+Find a model on Hugging Face, check its GPU requirements, and deploy it on your hardware.
 
-Gated Hugging Face models need accepted model terms and an `HF_TOKEN` with access
-in `.env`. The token stays on the server. Missing or unsupported metadata is shown
-before deployment; check the linked vLLM compatibility list for unfamiliar models.
+<img src="assets/vllm.png" alt="Search the Hugging Face catalogue and compare estimated GPU memory before deployment" width="100%">
 
-The launcher controls Docker. Every port is bound to `127.0.0.1`, and the launcher
-requires admin authentication. Keep these bindings or use an HTTPS reverse proxy
-with your organization’s access controls. Plain HTTP is only for local access.
-Blank, short and known example passwords are rejected before the launcher starts;
-Postgres also refuses short or known example passwords. For an existing installation,
-retain its current strong passwords when upgrading. Rotate example credentials through
-your database and gateway procedures before applying the update.
+### LiteLLM
 
-To stop: remove the model in the launcher, then `docker compose down`.
+Send requests through one OpenAI-compatible endpoint, with keys, teams, and budgets in one place.
 
-## Kubernetes (Helm)
+<img src="assets/litellm.png" alt="LiteLLM Playground sending a request to a locally deployed simulated model" width="100%">
 
-Needs a cluster with GPU nodes and the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html).
+### llm-d
+
+Route requests across healthy replicas using cache and queue signals, with defaults ready to use.
+
+<img src="assets/llmd.png" alt="Routing across two simulated replicas, with optional cache and queue weight settings" width="100%">
+
+### Grafana
+
+See model health, request traffic, and serving performance across the stack.
+
+<img src="assets/grafana.png" alt="Grafana stack overview showing the local simulation's model servers and request traffic" width="100%">
+
+## Start using it
+
+The installer downloads a versioned release, verifies the bundle, and generates credentials. Open **vLLM**, choose a model, then **Open LiteLLM** to send your first request.
+
+### Docker Compose
+
+For one machine, with Docker Compose and OpenSSL installed. Real models need an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 
 ```bash
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo add grafana https://grafana.github.io/helm-charts
-helm dependency build charts/inference-stack
-POSTGRES_PASSWORD="$(openssl rand -hex 24)"
-POSTGRES_ADMIN_PASSWORD="$(openssl rand -hex 24)"
-helm install inference-stack charts/inference-stack --namespace inference --create-namespace \
-  --set-string litellm.postgresql.auth.password="$POSTGRES_PASSWORD" \
-  --set-string litellm.postgresql.auth.postgres-password="$POSTGRES_ADMIN_PASSWORD"
-unset POSTGRES_PASSWORD POSTGRES_ADMIN_PASSWORD
-kubectl port-forward -n inference svc/inference-stack-launcher 8080:8080
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.0/install.sh | bash -s -- docker
 ```
 
-The chart generates the LiteLLM master key in the `inference-stack-litellm-masterkey`
-Kubernetes Secret. Retrieve its `masterkey` field through your secret-management
-workflow and sign in to the launcher as `admin` with that key. The same admin key
-signs in to LiteLLM. You can set `LAUNCHER_PASSWORD` on the launcher deployment for
-a separate password without changing the gateway key.
+### Kubernetes
 
-Open **vLLM** and choose a model. The launcher uses its service account to install
-the bundled model chart in this namespace. Helm waits for vLLM and llm-d, then
-registers the model in LiteLLM. The model page shows **Ready** after registration
-and readiness checks succeed. Removing a model uninstalls its release and removes
-its LiteLLM registration. Redeploying an existing model releases its GPUs before
-starting replacement replicas, so requests pause during that update.
-
-Forward the existing dashboards in separate terminals to use their cards:
+For your current cluster, with Helm, kubectl, OpenSSL, and permission to install resources. Real models need [GPU nodes](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html).
 
 ```bash
-kubectl port-forward -n inference svc/inference-stack-litellm 4000:4000
-kubectl port-forward -n inference svc/inference-stack-grafana 3000:80
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.0/install.sh | bash -s -- kubernetes
 ```
 
-For browser-accessible dashboard addresses, set `launcher.litellmPublicUrl` and
-`launcher.grafanaPublicUrl` in your Helm values. These are addresses the browser
-can reach, not Kubernetes service addresses.
+Open **[localhost:8080](http://localhost:8080)**. The installer tells you where to find your admin password. No GPU yet? Enable **Simulate without a GPU** in the model's **Settings** to try the flow with canned responses.
 
-### Permissions and gated models
+### Deploy with your agent
 
-The launcher requires admin authentication. Keep it behind port-forwarding or an
-HTTPS reverse proxy with your organization’s access controls.
-The chart grants deployment access within its namespace, including access to Helm
-release secrets. Use a dedicated namespace. It also grants read access to GPU
-nodes and pod allocations to estimate available capacity.
+Copy the prompt for your environment:
 
-For a command-only installation, add these values to the install command:
+<details>
+<summary>Docker Compose</summary>
 
-```bash
---set launcher.manageModels=false
+```text
+Set up Inference Stack v0.1.0 on this machine with Docker Compose.
+Read https://github.com/BerriAI/inference-stack/blob/v0.1.0/docs/setup.md
+and inspect its release installer before running it. Check prerequisites,
+preserve any existing installation and credentials, and keep secrets out
+of chat and logs. Start the stack, verify its health, and open the launcher.
+Help me deploy a model that fits my GPUs and send a request in LiteLLM.
+If no GPU is available, offer simulation and identify its canned response.
 ```
 
-The launcher checks its actual permissions and offers a complete Helm command when
-it cannot deploy. Run that command from this repository checkout using your cluster
-credentials. Keep the model page open or return to it to check readiness.
+</details>
 
-Set `launcher.inspectGPUs=false` if cluster-wide node and pod reads are unavailable.
-GPU capacity is then shown as unknown; verify the allocation before deploying.
-Kubernetes still enforces the model pods’ GPU resource requests.
+<details>
+<summary>Kubernetes</summary>
 
-For gated models, create a Kubernetes secret containing `HF_TOKEN` through your
-normal secret-management workflow. Set `launcher.huggingFaceSecret` to its name;
-the launcher and model pods use the same secret.
-
-### Routing and recovery
-
-Routing defaults are applied when a model is deployed. Under **llm-d → Settings**,
-you can adjust prefix-cache and queue-depth weights for a model. Other scorers are
-preserved. Applying changes restarts the router and can briefly pause requests.
-Custom policies without these scorers remain managed through their existing config.
-
-If deployment fails, the model page retains its settings and offers **Retry deployment**.
-For diagnostics, inspect the model pods and Helm release in the installation's namespace:
-
-```bash
-kubectl get pods -n inference
-helm list -n inference --all
+```text
+Set up Inference Stack v0.1.0 in Kubernetes.
+Read https://github.com/BerriAI/inference-stack/blob/v0.1.0/docs/setup.md
+and inspect its release installer before running it. Confirm the current
+cluster is the intended target, check permissions and GPU capacity, and
+preserve existing releases and credentials. Keep secrets out of chat and
+logs. Install the stack, verify its pods, and open the launcher through
+port-forwarding. Help me deploy a model and send a request in LiteLLM.
+Use simulation only if I choose it. Ask before provisioning paid resources.
 ```
 
-For Compose, inspect the model server with `docker logs vllm-0`. A failed image pull
-leaves the existing model running. A launcher restart retains Compose deployment
-progress in its state volume; Kubernetes discovers deployed resources from the cluster.
+</details>
 
-Remove models before uninstalling the stack:
+<br>
 
-```bash
-helm uninstall inference-stack --namespace inference
-```
-
-## Teams and fairness
-
-Create teams and keys in the LiteLLM UI. LiteLLM sends each request's team to llm-d in the
-`x-llm-d-inference-fairness-id` header ([llmd_headers.py](charts/inference-stack/files/llmd_headers.py)),
-so llm-d can share GPU capacity fairly between teams.
-
-## Layout
-
-| Path | What |
-|---|---|
-| `compose/` | Docker Compose stack and its config |
-| `launcher/` | Launcher web app (FastAPI and one static page) |
-| `charts/inference-stack/` | Helm chart: LiteLLM, Postgres, Prometheus, Grafana, launcher |
-| `charts/model/` | Helm chart: one model (vLLM, llm-d router, LiteLLM registration) |
-| `charts/inference-stack/files/dashboards/` | Grafana dashboards, used by both Compose and Helm |
-
-The LiteLLM and llm-d dashboards are copied from their upstream repositories.
-
-## Development
-
-Keep the launcher as FastAPI with plain HTML, CSS and JavaScript. The catalogue and
-Kubernetes integrations are ordinary modules in `launcher/`; deployment packaging
-stays in the existing Compose and Helm directories.
-
-```bash
-python -m venv .venv
-.venv/bin/pip install -r launcher/requirements.txt
-.venv/bin/python -m unittest discover -s tests
-helm dependency build charts/model
-helm dependency build charts/inference-stack
-docker build -f launcher/Dockerfile -t inference-stack-launcher:dev .
-```
+[Setup and configuration](docs/setup.md) · [Releases](https://github.com/BerriAI/inference-stack/releases) · [Development](docs/setup.md#development) · [MIT license](LICENSE)
