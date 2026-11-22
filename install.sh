@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=0.3.0
+VERSION=0.3.1
 RELEASE="https://github.com/BerriAI/inference-stack/releases/download/v$VERSION"
 mode="${1:-}"
 case "$mode" in
@@ -33,12 +33,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-/dev/null}")" && pwd)"
-if [[ -f "$script_dir/compose/docker-compose.yaml" ]]; then
-  root="$script_dir"
-else
-  root="${INFERENCE_STACK_DIR:-$PWD/inference-stack}"
-  if [[ ! -e "$root" ]]; then
+download_bundle() {
     need curl
     need tar
     temporary="$(mktemp -d)"
@@ -57,10 +52,50 @@ else
     tar -xzf "$temporary/$archive" -C "$temporary/unpacked"
     extracted="$temporary/unpacked/inference-stack-$VERSION"
     [[ -f "$extracted/compose/docker-compose.yaml" && -f "$extracted/VERSION" ]] || { printf 'The release archive is incomplete.\n' >&2; exit 1; }
+}
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-/dev/null}")" && pwd)"
+if [[ -f "$script_dir/compose/docker-compose.yaml" ]]; then
+  root="$script_dir"
+else
+  root="${INFERENCE_STACK_DIR:-$PWD/inference-stack}"
+  if [[ ! -e "$root" ]]; then
+    download_bundle
     mkdir -p -- "$(dirname -- "$root")"
     mv -- "$extracted" "$root"
   fi
   [[ -f "$root/compose/docker-compose.yaml" && -f "$root/VERSION" ]] || { printf 'The install directory already exists and is not an Inference Stack installation. Set INFERENCE_STACK_DIR to an empty location.\n' >&2; exit 1; }
+fi
+
+if [[ "$mode" == docker ]]; then
+  oldversion="$(cat "$root/VERSION")"
+  if [[ "$oldversion" != "$VERSION" && "$(printf '%s\n' "$oldversion" "$VERSION" | sort -V | head -n 1)" == "$oldversion" ]]; then
+    backup="${root%/}.v$oldversion"
+    [[ ! -e "$backup" ]] || { printf 'Upgrade backup already exists: %s. Move it before retrying.\n' "$backup" >&2; exit 1; }
+    download_bundle
+    oldimage="ghcr.io/berriai/inference-stack/launcher:$oldversion"
+    pinnedimage="$oldimage"
+    if [[ -f "$root/launcher-image.txt" ]]; then pinnedimage="$(cat "$root/launcher-image.txt")"; fi
+    newimage="ghcr.io/berriai/inference-stack/launcher:$VERSION"
+    if [[ -f "$extracted/launcher-image.txt" ]]; then newimage="$(cat "$extracted/launcher-image.txt")"; fi
+    if [[ -f "$root/compose/.env" ]]; then
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+          "INFERENCE_STACK_LAUNCHER_IMAGE=$oldimage"|"INFERENCE_STACK_LAUNCHER_IMAGE=$pinnedimage")
+            line="INFERENCE_STACK_LAUNCHER_IMAGE=$newimage" ;;
+        esac
+        printf '%s\n' "$line"
+      done < "$root/compose/.env" > "$extracted/compose/.env"
+      chmod 600 "$extracted/compose/.env"
+    fi
+    mv -- "$root" "$backup"
+    if ! mv -- "$extracted" "$root"; then
+      mv -- "$backup" "$root"
+      printf 'Could not install the new recipe; the previous installation was restored.\n' >&2
+      exit 1
+    fi
+    printf 'Previous recipe backed up to %s\n' "$backup"
+  fi
 fi
 
 cd -- "$root"

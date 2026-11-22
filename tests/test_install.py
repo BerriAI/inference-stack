@@ -113,6 +113,75 @@ fi
         self.assertNotEqual(self.run_install().returncode, 0)
         self.assertEqual(marker.read_text(), 'keep')
 
+    def existing(self, version='0.3.0', image=None):
+        stack = self.root / 'stack'
+        (stack / 'compose').mkdir(parents=True)
+        (stack / 'VERSION').write_text(version + '\n')
+        (stack / 'compose/docker-compose.yaml').write_text('old recipe\n')
+        image = image or f'ghcr.io/berriai/inference-stack/launcher:{version}'
+        (stack / 'compose/.env').write_text(
+            f'LITELLM_MASTER_KEY=keep-me\nPOSTGRES_PASSWORD=also-keep\nINFERENCE_STACK_LAUNCHER_IMAGE={image}\nCOMPOSE_PROJECT_NAME=my-stack\n')
+        (stack / 'compose/.env').chmod(0o600)
+        return stack
+
+    def test_upgrade_swaps_recipe_and_preserves_credentials(self):
+        self.bundle()
+        stack = self.existing()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((stack / 'VERSION').read_text().strip(), self.version)
+        self.assertEqual((stack / 'compose/docker-compose.yaml').read_text(), 'services: {}\n')
+        env = stack / 'compose/.env'
+        self.assertIn('LITELLM_MASTER_KEY=keep-me\nPOSTGRES_PASSWORD=also-keep\n', env.read_text())
+        self.assertIn('COMPOSE_PROJECT_NAME=my-stack\n', env.read_text())
+        self.assertIn(f'launcher:{self.version}\n', env.read_text())
+        self.assertEqual(env.stat().st_mode & 0o777, 0o600)
+        backup = self.root / 'stack.v0.3.0'
+        self.assertEqual((backup / 'compose/docker-compose.yaml').read_text(), 'old recipe\n')
+        self.assertIn(str(backup), result.stdout)
+        self.assertIn('up -d --no-build --wait', self.log.read_text())
+
+    def test_upgrade_preserves_custom_image(self):
+        self.bundle()
+        stack = self.existing(image='registry.example/launcher:custom')
+        before = (stack / 'compose/.env').read_bytes()
+        self.assertEqual(self.run_install().returncode, 0)
+        self.assertEqual((stack / 'compose/.env').read_bytes(), before)
+
+    def test_upgrade_rewrites_old_pinned_image(self):
+        self.bundle()
+        stack = self.existing(image='registry.example/launcher@sha256:old')
+        (stack / 'launcher-image.txt').write_text('registry.example/launcher@sha256:old\n')
+        self.assertEqual(self.run_install().returncode, 0)
+        self.assertIn(f'launcher:{self.version}\n', (stack / 'compose/.env').read_text())
+
+    def test_equal_and_newer_versions_are_unchanged(self):
+        for version in (self.version, '99.0.0'):
+            with self.subTest(version=version):
+                stack = self.existing(version)
+                before = (stack / 'compose/.env').read_bytes()
+                self.assertEqual(self.run_install().returncode, 0)
+                self.assertEqual((stack / 'VERSION').read_text(), version + '\n')
+                self.assertEqual((stack / 'compose/docker-compose.yaml').read_text(), 'old recipe\n')
+                self.assertEqual((stack / 'compose/.env').read_bytes(), before)
+                shutil.rmtree(stack)
+
+    def test_upgrade_backup_conflict_preserves_install(self):
+        stack = self.existing()
+        (self.root / 'stack.v0.3.0').mkdir()
+        result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('backup already exists', result.stderr)
+        self.assertEqual((stack / 'VERSION').read_text(), '0.3.0\n')
+
+    def test_upgrade_checksum_failure_preserves_install(self):
+        self.bundle(valid=False)
+        stack = self.existing()
+        result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('checksum', result.stderr)
+        self.assertEqual((stack / 'compose/docker-compose.yaml').read_text(), 'old recipe\n')
+
     def test_helm_permission_failure_does_not_install(self):
         self.checkout()
         self.env['HELM_DENIED'] = 'yes'
