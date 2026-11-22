@@ -16,7 +16,9 @@
 
 </div>
 
-<img src="assets/stack-flow.gif" alt="Apps send requests to LiteLLM for model routing, then llm-d selects a vLLM replica. Hugging Face supplies model weights; Grafana shows metrics collected by Prometheus." width="100%">
+<img src="assets/launcher.png" alt="Inference Stack homepage: deployment and GPU totals, Deployments, LiteLLM, and Grafana. A fresh installation starts empty." width="100%">
+
+**Building agents at a startup?** [Tell us what you’re building](https://docs.google.com/forms/d/e/1FAIpQLSdS9pdZ9sgYzfFIOgRqYNtjyqGnmpbyqbklDnLCeLEslY2gyQ/viewform) and help shape Inference Stack. We’ll follow up personally.
 
 <a id="get-started"></a>
 
@@ -51,6 +53,8 @@ Start with no GPUs or models. Open **Deployments**, choose a model, review the G
 [Setup and prerequisites](docs/setup.md) · [Deploy with your agent](docs/setup.md#deploy-with-your-agent)
 
 ## The stack
+
+<img src="assets/stack-flow.gif" alt="Apps send requests to LiteLLM for model routing, then llm-d selects a vLLM replica. Hugging Face supplies model weights; Grafana shows metrics collected by Prometheus." width="100%">
 
 ### vLLM
 
