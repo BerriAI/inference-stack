@@ -39,12 +39,18 @@ services:
       - ../charts/inference-stack/files/llmd_headers.py:/app/config/llmd_headers.py:ro
     ports:
       - "127.0.0.1:4000:4000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      start_period: 60s
+      retries: 24
     depends_on:
       postgres:
         condition: service_healthy
 
   launcher:
-    image: ${INFERENCE_STACK_LAUNCHER_IMAGE:-ghcr.io/berriai/inference-stack/launcher:0.2.0}
+    image: ${INFERENCE_STACK_LAUNCHER_IMAGE:-ghcr.io/berriai/inference-stack/launcher:0.2.1}
     build:
       context: ..
       dockerfile: launcher/Dockerfile
