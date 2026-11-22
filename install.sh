@@ -77,7 +77,7 @@ if [[ "$mode" == docker ]]; then
   docker compose up -d --no-build --wait </dev/null
   printf '\nOpen http://localhost:8080\nSign in as admin with LITELLM_MASTER_KEY from compose/.env.\nChoose vLLM to deploy a model, or enable simulation in its Settings.\n'
 else
-  existing="$(helm list --namespace inference --all --filter '^inference-stack$' --short)"
+  existing="$(helm list --namespace inference --deployed --failed --pending --uninstalled --superseded --uninstalling --filter '^inference-stack$' --short)"
   if [[ -n "$existing" ]]; then
     deployed="$(helm list --namespace inference --deployed --filter '^inference-stack$' --short)"
     [[ -n "$deployed" ]] || { printf 'The existing release needs recovery. Run helm status inference-stack -n inference before retrying; its credentials have been preserved.\n' >&2; exit 1; }

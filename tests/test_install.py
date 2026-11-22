@@ -26,7 +26,7 @@ class InstallerTests(unittest.TestCase):
                     'CALLS': str(self.log), 'INFERENCE_STACK_DIR': str(self.root / 'stack')}
         for name, body in {
             'docker': 'echo "$*" >> "$CALLS"\n',
-            'helm': 'echo "$*" >> "$CALLS"\nif [ "$1" = list ]; then\n [ "${HELM_DENIED:-}" != yes ] || exit 1\n [ "${HELM_EXISTS:-}" != yes ] || echo inference-stack\nfi\n',
+            'helm': 'echo "$*" >> "$CALLS"\ncase " $* " in *" --all "*) echo "unknown flag: --all" >&2; exit 1;; esac\nif [ "$1" = list ]; then\n [ "${HELM_DENIED:-}" != yes ] || exit 1\n [ "${HELM_EXISTS:-}" != yes ] || echo inference-stack\nfi\n',
             'kubectl': 'echo "$*" >> "$CALLS"\nif [ "$1" = port-forward ]; then exec sleep 30; fi\n',
         }.items():
             self.tool(name, body)
