@@ -12,11 +12,11 @@
   <a href="https://grafana.com/oss/grafana/"><img src="launcher/static/logos/grafana.svg" alt="Grafana" height="40"></a>
 </p>
 
-**[Set up with Docker](#docker-compose)** &nbsp; · &nbsp; **[Set up with Kubernetes](#kubernetes)**
+**[Set up with Docker](#docker-compose)** &nbsp; · &nbsp; **[Set up with Kubernetes](#kubernetes)** &nbsp; · &nbsp; **[Launch on AWS](#aws)**
 
 </div>
 
-<img src="assets/stack-flow.gif" alt="Apps send requests to LiteLLM for model routing, then llm-d selects a vLLM replica. Hugging Face supplies model weights; Grafana shows metrics collected by Prometheus." width="100%">
+<img src="assets/launcher.png" alt="Inference Stack homepage: deployment and GPU totals, Deployments, LiteLLM, and Grafana. A fresh installation starts empty." width="100%">
 
 <a id="get-started"></a>
 
@@ -42,9 +42,17 @@ Open [localhost:8080](http://localhost:8080) and sign in as `admin`. The install
 
 No GPU? Enable **Simulate without a GPU** in the model's **Settings** for canned responses.
 
+### AWS
+
+[Launch on AWS](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/create/review?templateURL=https%3A%2F%2Finference-stack-release-templates-templates-e0eqnr6ih8gk.s3.us-east-2.amazonaws.com%2Freleases%2Fv0.2.0%2Faws-stack.yaml&stackName=inference-stack) in your own account. Choose an admin password and create the stack. Once AWS shows **CREATE_COMPLETE**, open **Outputs → OpenInferenceStack**.
+
+Start with no GPUs or models. Open **Deployments**, choose a model, review the GPU price, and choose **Add GPU and deploy**. Launcher compute is $0.0832/hour in Ohio; GPUs are $1.212/hour each, plus disk, IPv4 and network. New accounts may need a GPU quota increase. [Costs and cleanup](docs/setup.md#aws).
+
 [Setup and prerequisites](docs/setup.md) · [Deploy with your agent](docs/setup.md#deploy-with-your-agent)
 
 ## The stack
+
+<img src="assets/stack-flow.gif" alt="Apps send requests to LiteLLM for model routing, then llm-d selects a vLLM replica. Hugging Face supplies model weights; Grafana shows metrics collected by Prometheus." width="100%">
 
 ### vLLM
 
