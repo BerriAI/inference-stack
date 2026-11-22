@@ -67,7 +67,7 @@ If setup fails, read the failed event in CloudFormation. For a quota error, requ
 
 1. Open **Deployments** in the launcher. Choose **Deploy a model** if deployments already exist.
 2. Search Hugging Face, select a model, and review its GPU allocation. Replicas and context length are optional under **Settings**. Without a GPU, enable **Simulate without a GPU (canned responses)** there.
-3. Click **Deploy**. On AWS, if capacity is needed, select an **AWS GPU** and review its price before choosing **Add GPU and deploy**. Wait until the model page shows **Ready**.
+3. Choose **Deploy**, or **Add GPU and deploy** after selecting an **AWS GPU** and reviewing its price. Wait until the model page shows **Ready**.
 4. Choose **Try in LiteLLM** and sign in as `admin` with the same admin password. In Chat, select the API model name shown on the deployment page, enter a prompt, and send it.
 
 A response confirms the path from LiteLLM through llm-d to the model server. Simulation returns canned text; it does not validate a real model or GPU. To connect an application, create a virtual key in LiteLLM and copy the **API base** from the deployment page. Local Docker and port-forwarded Kubernetes addresses work from the same machine; configure a reachable HTTPS address for applications elsewhere.
@@ -125,7 +125,8 @@ For dashboards hosted beyond port-forwarding, set `launcher.litellmPublicUrl` an
 
 | Credential | Used by | Source |
 | --- | --- | --- |
-| LiteLLM master key | Launcher and LiteLLM admin login | Compose `.env`, or the generated Kubernetes Secret described above |
+| Admin password | AWS launcher, LiteLLM, and Grafana sign-in | Chosen during AWS setup |
+| LiteLLM master key | Docker/Kubernetes launcher and LiteLLM admin login | Compose `.env`, or the generated Kubernetes Secret described above |
 | Postgres passwords | Stack services | Generated during installation |
 | Virtual key | Application requests | Create in the LiteLLM dashboard |
 
@@ -240,6 +241,21 @@ preserve existing releases and credentials. Keep secrets out of chat and
 logs. Install the stack, verify its pods, and open the launcher through
 port-forwarding. Help me deploy a model and send a request in LiteLLM.
 Use simulation only if I choose it. Ask before provisioning paid resources.
+```
+
+</details>
+
+<details>
+<summary>AWS</summary>
+
+```text
+Set up Inference Stack v0.3.0 in my AWS account.
+Read https://github.com/BerriAI/inference-stack/blob/v0.3.0/docs/setup.md#aws
+and inspect the release template. Confirm the account, permissions, and
+cost before creating the stack. Keep credentials out of chat and logs.
+Open the empty launcher, help me choose a GPU and model, and ask before
+starting paid GPU capacity. Verify a response in LiteLLM Chat and show
+me how to remove the GPU and delete the installation.
 ```
 
 </details>
