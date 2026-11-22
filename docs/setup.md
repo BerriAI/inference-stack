@@ -9,7 +9,7 @@ Deploy a Hugging Face model with vLLM. LiteLLM lets you manage models and send r
 Use this path for one machine. You need Docker with Compose, curl, and OpenSSL. Real models also need an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). You can try the flow without a GPU using simulation.
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.2.0/install.sh | bash -s -- docker
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.2.1/install.sh | bash -s -- docker
 ```
 
 The installer verifies the release bundle, extracts it into `./inference-stack`, generates a private `compose/.env`, and starts the prebuilt stack. To choose another directory, export `INFERENCE_STACK_DIR` before running it. An existing installation and its credentials are reused.
@@ -25,7 +25,7 @@ All published ports bind to `127.0.0.1`. The launcher controls Docker, so keep l
 Use this path for a cluster. You need Helm, `kubectl`, curl, OpenSSL, and permission to install the stack's resources. Confirm that `kubectl config current-context` selects the intended cluster. Real models need GPU nodes with the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html). Simulation does not require GPUs.
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.2.0/install.sh | bash -s -- kubernetes
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.2.1/install.sh | bash -s -- kubernetes
 ```
 
 The installer verifies and extracts the release into `./inference-stack`, installs the stack in namespace `inference` with generated credentials, waits for readiness, and forwards the launcher, LiteLLM, and Grafana to localhost. Leave the terminal open; Ctrl-C closes these connections while the stack keeps running. Running the command again reconnects to an existing healthy release without changing its values.
@@ -49,7 +49,7 @@ To start:
 3. Wait for `CREATE_COMPLETE`, then open **Outputs → OpenInferenceStack**. Sign in with your chosen password.
 4. Open **Deployments**, choose a model, and review its GPU allocation. If capacity is needed, review the price and choose **Add GPU and deploy**. You can also add GPUs separately from **GPUs**.
 5. Wait for the GPU and model to become ready. Leave the page and return while setup continues; progress is retained.
-6. When the model is **Ready**, choose **Try in LiteLLM**. Sign in as `admin` with the same password, choose the model in Playground, and send a message.
+6. When the model is **Ready**, choose **Try in LiteLLM**. Sign in as `admin` with the same password, choose the model in Chat, and send a message.
 
 The launcher costs $0.0832/hour for compute and has a 40 GB disk. Each GPU is a `g5.2xlarge` with one NVIDIA A10G (24 GB), a 200 GB disk, and $1.212/hour compute. Disk, public IPv4, network, and other AWS charges are additional. The launcher keeps running when there are no GPUs.
 
@@ -68,7 +68,7 @@ If setup fails, read the failed event in CloudFormation. For a quota error, requ
 1. Open **Deployments** in the launcher. Choose **Deploy a model** if deployments already exist.
 2. Search Hugging Face, select a model, and review its GPU allocation. Replicas and context length are optional under **Settings**. Without a GPU, enable **Simulate without a GPU (canned responses)** there.
 3. Click **Deploy**. Wait until the model page shows **Ready**.
-4. Choose **Try in LiteLLM** and sign in as `admin` with the same admin password. In Playground, select the API model name shown on the deployment page, enter a prompt, and send it.
+4. Choose **Try in LiteLLM** and sign in as `admin` with the same admin password. In Chat, select the API model name shown on the deployment page, enter a prompt, and send it.
 
 A response confirms the path from LiteLLM through llm-d to the model server. Simulation returns canned text; it does not validate a real model or GPU. To connect an application, create a virtual key in LiteLLM and copy the **API base** from the deployment page. Local Docker and port-forwarded Kubernetes addresses work from the same machine; configure a reachable HTTPS address for applications elsewhere.
 
@@ -183,12 +183,12 @@ Database persistent volumes may remain; manage them separately according to your
 
 ## Update
 
-v0.2.0 adds deployment-first setup, AWS GPU provisioning, deployment logs, and native LiteLLM handoffs. Keep your existing credentials and volumes.
+Keep your existing credentials and volumes when updating to v0.2.1.
 
 For Docker, change this line in `inference-stack/compose/.env`:
 
 ```dotenv
-INFERENCE_STACK_LAUNCHER_IMAGE=ghcr.io/berriai/inference-stack/launcher:0.2.0
+INFERENCE_STACK_LAUNCHER_IMAGE=ghcr.io/berriai/inference-stack/launcher:0.2.1
 ```
 
 Then update the launcher:
@@ -201,8 +201,8 @@ docker compose up -d --no-build --pull always launcher
 For Kubernetes, update the chart while retaining your values:
 
 ```bash
-helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.2.0/inference-stack-0.2.0.tgz \
-  --namespace inference --reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.2.0 --wait
+helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.2.1/inference-stack-0.2.1.tgz \
+  --namespace inference --reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.2.1 --wait
 ```
 
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
@@ -215,8 +215,8 @@ Copy the prompt for your environment:
 <summary>Docker Compose</summary>
 
 ```text
-Set up Inference Stack v0.2.0 on this machine with Docker Compose.
-Read https://github.com/BerriAI/inference-stack/blob/v0.2.0/docs/setup.md
+Set up Inference Stack v0.2.1 on this machine with Docker Compose.
+Read https://github.com/BerriAI/inference-stack/blob/v0.2.1/docs/setup.md
 and inspect its release installer before running it. Check prerequisites,
 preserve any existing installation and credentials, and keep secrets out
 of chat and logs. Start the stack, verify its health, and open the launcher.
@@ -230,8 +230,8 @@ If no GPU is available, offer simulation and identify its canned response.
 <summary>Kubernetes</summary>
 
 ```text
-Set up Inference Stack v0.2.0 in Kubernetes.
-Read https://github.com/BerriAI/inference-stack/blob/v0.2.0/docs/setup.md
+Set up Inference Stack v0.2.1 in Kubernetes.
+Read https://github.com/BerriAI/inference-stack/blob/v0.2.1/docs/setup.md
 and inspect its release installer before running it. Confirm the current
 cluster is the intended target, check permissions and GPU capacity, and
 preserve existing releases and credentials. Keep secrets out of chat and

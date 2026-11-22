@@ -179,3 +179,7 @@ h1:focus { outline:none; }
 .stack-token { margin-top:20px; }
 .stack-token label { display:block; font-size:12px; margin:16px 0 12px; }
 .stack-token input { display:block; width:100%; margin-top:8px; padding:10px; border:1px solid var(--stack-line); border-radius:7px; background:var(--stack-bg); color:var(--stack-fg); }
+
+.stack-arrow { width:17px; height:17px; flex:none; display:inline-block; vertical-align:-3px; }
+.tile-arrow .stack-arrow { width:24px; height:24px; }
+a.stack-text-button, button.stack-text-button { display:inline-flex; align-items:center; gap:7px; }

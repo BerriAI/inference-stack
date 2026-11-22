@@ -85,17 +85,17 @@ test('GPU details distinguish detected memory use and reject unsafe AWS lifecycl
     assert.equal(await page.getByRole('cell', {name: '10 GB', exact: true}).count(), 1);
     assert.match(await page.locator('main').innerText(), /Detected GPUs may already be busy/);
     assert.match(await page.locator('main').innerText(), /stays online when no GPUs are running/);
-    assert.equal(await page.getByRole('link', {name: 'Delete installation ↗', exact: true}).count(), 0);
+    assert.equal(await page.getByRole('link', {name: 'Delete installation', exact: true}).count(), 0);
   } finally { await page.close(); }
 });
 
-test('Ready model opens the native Playground and identifies its API model name', async () => {
+test('Ready model opens the native Chat and identifies its API model name', async () => {
   const {page} = await modelPage(1, {
     models: [{served_model: 'example/model', name: 'example-model', status: 'ready', replicas: 1, gpus_per_replica: 1, simulate: true}],
     components: {litellm: {healthy: true, url: 'https://example.com/litellm/ui'}, grafana: {healthy: true}, router: {healthy: true}},
   });
   try {
-    assert.equal(await page.getByRole('link', {name: 'Try in LiteLLM ↗'}).getAttribute('href'), 'https://example.com/litellm/ui/playground/');
+    assert.equal(await page.getByRole('link', {name: 'Try in LiteLLM'}).getAttribute('href'), 'https://example.com/litellm/ui/chat/');
     assert.match(await page.locator('main').innerText(), /Select example-model/);
     assert.match(await page.locator('main').innerText(), /Simulation returns canned text/);
   } finally { await page.close(); }
@@ -117,7 +117,7 @@ test('Empty AWS home exposes zero counts and a priced GPU action without install
     assert.equal(await page.getByRole('link', {name: '0 GPUs', exact: true}).count(), 1);
     assert.equal(await page.locator('.stack-tile').count(), 2);
     assert.equal(await page.getByText('No GPU detected', {exact: true}).count(), 0);
-    await page.getByRole('button', {name: 'Add GPU →', exact: true}).click();
+    await page.getByRole('button', {name: 'Add GPU', exact: true}).click();
     await page.getByRole('heading', {name: 'Add GPU', exact: true}).waitFor();
     assert.match(await page.locator('main').innerText(), /Removed automatically after 4 hours/);
     assert.equal(rents.length, 0);
@@ -139,7 +139,7 @@ test('GPU rental moves to pending capacity and refresh shows availability', asyn
   });
   try {
     await page.getByRole('button', {name: 'inference stack', exact: true}).click();
-    await page.getByRole('button', {name: 'Add GPU →', exact: true}).click();
+    await page.getByRole('button', {name: 'Add GPU', exact: true}).click();
     await page.getByRole('button', {name: 'Add GPU · $1.212/hour', exact: true}).click();
     await page.getByRole('heading', {name: 'GPUs', exact: true}).waitFor();
     assert.match(await page.locator('main').innerText(), /Starting 1 GPU/);
@@ -186,7 +186,7 @@ test('Deployment details expose logs and contextual commands without replacing L
     await page.getByText('Model is serving',{exact:true}).waitFor();
     await page.getByRole('button',{name:'Advanced',exact:true}).click();
     await page.getByText('docker logs --tail 200 vllm-0',{exact:true}).waitFor();
-    assert.equal(await page.getByRole('link',{name:'Try in LiteLLM ↗'}).getAttribute('href'),'https://example.com/litellm/ui/playground/');
+    assert.equal(await page.getByRole('link',{name:'Try in LiteLLM'}).getAttribute('href'),'https://example.com/litellm/ui/chat/');
     assert.match(await page.locator('.stack-api').innerText(),/https:\/\/example.com\/litellm\/v1/);
   } finally {await page.close();}
 });

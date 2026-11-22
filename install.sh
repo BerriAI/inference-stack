@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=0.2.1
+VERSION=0.2.2
 RELEASE="https://github.com/BerriAI/inference-stack/releases/download/v$VERSION"
 mode="${1:-}"
 case "$mode" in
