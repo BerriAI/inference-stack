@@ -19,6 +19,7 @@ class InstallerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.bin = self.root / 'bin'
         self.bin.mkdir()
+        self.version = (Path(__file__).resolve().parents[1] / 'VERSION').read_text().strip()
         self.install = self.root / 'install.sh'
         shutil.copy(Path(__file__).resolve().parents[1] / 'install.sh', self.install)
         self.log = self.root / 'calls'
@@ -39,7 +40,7 @@ class InstallerTests(unittest.TestCase):
     def checkout(self):
         (self.root / 'compose').mkdir()
         (self.root / 'compose/docker-compose.yaml').write_text('services: {}\n')
-        (self.root / 'VERSION').write_text('0.1.0\n')
+        (self.root / 'VERSION').write_text(self.version + '\n')
         (self.root / 'charts/inference-stack/charts').mkdir(parents=True)
 
     def run_install(self, mode='docker'):
@@ -49,14 +50,14 @@ class InstallerTests(unittest.TestCase):
     def bundle(self, valid=True, corrupt=False):
         archive = self.root / 'archive.tar.gz'
         with tarfile.open(archive, 'w:gz') as tar:
-            for name, value in {'VERSION': b'0.1.0\n', 'compose/docker-compose.yaml': b'services: {}\n'}.items():
-                info = tarfile.TarInfo('inference-stack-0.1.0/' + name)
+            for name, value in {'VERSION': (self.version + '\n').encode(), 'compose/docker-compose.yaml': b'services: {}\n'}.items():
+                info = tarfile.TarInfo(f'inference-stack-{self.version}/' + name)
                 info.size = len(value)
                 tar.addfile(info, io.BytesIO(value))
         if corrupt:
             archive.write_bytes(b'not an archive')
         digest = hashlib.sha256(archive.read_bytes()).hexdigest() if valid else '0' * 64
-        (self.root / 'sums').write_text(digest + '  inference-stack-0.1.0.tar.gz\n')
+        (self.root / 'sums').write_text(digest + f'  inference-stack-{self.version}.tar.gz\n')
         self.env['FIXTURES'] = str(self.root)
         self.tool('curl', 'case "$5" in\n */SHA256SUMS) cp "$FIXTURES/sums" "$7";;\n *) cp "$FIXTURES/archive.tar.gz" "$7";;\nesac\n')
 

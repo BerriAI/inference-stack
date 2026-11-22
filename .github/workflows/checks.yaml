@@ -15,6 +15,10 @@ jobs:
           python-version: '3.12'
       - run: pip install -r launcher/requirements.txt
       - run: node --check launcher/static/app.js
+      - run: |
+          npm install --prefix "$RUNNER_TEMP/browser-tests" --no-package-lock playwright@1.62.1
+          "$RUNNER_TEMP/browser-tests/node_modules/.bin/playwright" install --with-deps chromium
+          NODE_PATH="$RUNNER_TEMP/browser-tests/node_modules" node --test tests/test_model_settings.cjs
       - uses: azure/setup-helm@v4
         with:
           version: v3.17.3

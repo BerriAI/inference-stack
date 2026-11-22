@@ -42,7 +42,7 @@ services:
         condition: service_healthy
 
   launcher:
-    image: ${INFERENCE_STACK_LAUNCHER_IMAGE:-ghcr.io/berriai/inference-stack/launcher:0.1.0}
+    image: ${INFERENCE_STACK_LAUNCHER_IMAGE:-ghcr.io/berriai/inference-stack/launcher:0.1.1}
     build:
       context: ..
       dockerfile: launcher/Dockerfile
