@@ -69,8 +69,6 @@ Runs models from Hugging Face on your GPUs.
 
 Manage models and send requests through one API or Chat.
 
-<img src="assets/litellm.png" alt="LiteLLM Model Hub showing example models served through vLLM" width="100%">
-
 ### llm-d
 
 Picks a vLLM replica for each request using cache and queue data.
