@@ -1,4 +1,4 @@
-# Run inference stack
+# Run Inference Stack
 
 Deploy a model with vLLM, route requests through llm-d, and use LiteLLM for API access, keys, teams, and budgets. Grafana brings the stack's metrics together.
 
@@ -6,19 +6,15 @@ Deploy a model with vLLM, route requests through llm-d, and use LiteLLM for API 
 
 ## Docker Compose
 
-Use this path for one machine. You need Git, Docker with Compose, and OpenSSL. Real models also need an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). You can try the flow without a GPU using simulation.
-
-Clone the repository and generate the two passwords locally. This command creates a private `.env` file and refuses to overwrite an existing one.
+Use this path for one machine. You need Docker with Compose, curl, and OpenSSL. Real models also need an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). You can try the flow without a GPU using simulation.
 
 ```bash
-git clone https://github.com/BerriAI/inference-stack
-cd inference-stack/compose
-(umask 077; set -C; printf 'LITELLM_MASTER_KEY=%s\nPOSTGRES_PASSWORD=%s\n' \
-  "$(openssl rand -hex 24)" "$(openssl rand -hex 24)" > .env)
-docker compose up -d
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.0/install.sh | bash -s -- docker
 ```
 
-Open [the launcher](http://localhost:8080). Sign in as `admin` with the `LITELLM_MASTER_KEY` from your local `.env`, then [deploy a model and send a request](#your-first-request).
+The installer verifies the release bundle, extracts it into `./inference-stack`, generates a private `compose/.env`, and starts the prebuilt stack. To choose another directory, export `INFERENCE_STACK_DIR` before running it. An existing installation and its credentials are reused.
+
+Open [the launcher](http://localhost:8080). Sign in as `admin` with the `LITELLM_MASTER_KEY` from `inference-stack/compose/.env`, then [deploy a model and send a request](#your-first-request).
 
 Keep `.env` for future starts; the database retains its password. Blank, short, and known example passwords are rejected. Compose runs one model at a time. **Replace model** downloads the server image, then stops the previous model before starting its replacement.
 
@@ -26,38 +22,15 @@ All published ports bind to `127.0.0.1`. The launcher controls Docker, so keep l
 
 ## Kubernetes
 
-Use this path for a cluster. You need Git, Helm, `kubectl`, OpenSSL, and permission to install the stack's resources. Real models need GPU nodes with the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html). Simulation does not require GPUs.
-
-From a fresh checkout:
+Use this path for a cluster. You need Helm, `kubectl`, curl, OpenSSL, and permission to install the stack's resources. Confirm that `kubectl config current-context` selects the intended cluster. Real models need GPU nodes with the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html). Simulation does not require GPUs.
 
 ```bash
-git clone https://github.com/BerriAI/inference-stack
-cd inference-stack
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo add grafana https://grafana.github.io/helm-charts
-helm dependency build charts/inference-stack
-POSTGRES_PASSWORD="$(openssl rand -hex 24)"
-POSTGRES_ADMIN_PASSWORD="$(openssl rand -hex 24)"
-helm install inference-stack charts/inference-stack --namespace inference --create-namespace \
-  --set-string litellm.postgresql.auth.password="$POSTGRES_PASSWORD" \
-  --set-string litellm.postgresql.auth.postgres-password="$POSTGRES_ADMIN_PASSWORD"
-unset POSTGRES_PASSWORD POSTGRES_ADMIN_PASSWORD
-kubectl port-forward -n inference svc/inference-stack-launcher 8080:8080
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.0/install.sh | bash -s -- kubernetes
 ```
 
-Leave port-forwarding running and open [the launcher](http://localhost:8080). The chart generates an admin key: in your Kubernetes secret viewer, open namespace `inference`, Secret `inference-stack-litellm-masterkey`, field `masterkey`. Sign in as `admin` with that value. The same key signs in to LiteLLM.
+The installer verifies and extracts the release into `./inference-stack`, installs the stack in namespace `inference` with generated credentials, waits for readiness, and forwards the launcher, LiteLLM, and Grafana to localhost. Leave the terminal open; Ctrl-C closes these connections while the stack keeps running. Running the command again reconnects to an existing healthy release without changing its values.
 
-To open LiteLLM and Grafana from their launcher cards, run each command in a separate terminal:
-
-```bash
-kubectl port-forward -n inference svc/inference-stack-litellm 4000:4000
-```
-
-```bash
-kubectl port-forward -n inference svc/inference-stack-grafana 3000:80
-```
-
-Continue to [your first request](#your-first-request).
+Open [the launcher](http://localhost:8080). In your Kubernetes secret viewer, open namespace `inference`, Secret `inference-stack-litellm-masterkey`, field `masterkey`. Sign in as `admin` with that value. The same key signs in to LiteLLM. Continue to [your first request](#your-first-request).
 
 The launcher installs each model and its router as a Helm release in this namespace. It waits for readiness and registers the model in LiteLLM. Removing a model uninstalls its release and removes its registration. Redeploying a model releases its GPUs before starting replacement replicas, so requests pause during that update.
 
@@ -109,7 +82,15 @@ The chart checks the launcher's actual permissions. These values control the acc
 | `launcher.manageModels` | `true` | Set to `false` to offer deployment and removal commands instead of running them. |
 | `launcher.inspectGPUs` | `true` | Set to `false` to avoid cluster-wide node and pod reads. GPU capacity appears as unknown. |
 
-For example, add `--set launcher.manageModels=false` to the install command for a command-only launcher. Run the generated Helm commands from this repository's root with your cluster credentials. Keep the model page open or return to it to check readiness. When capacity is unknown, verify the allocation yourself; Kubernetes still enforces GPU resource requests.
+After installation, switch to a command-only launcher without replacing its generated credentials:
+
+```bash
+cd inference-stack
+helm upgrade inference-stack charts/inference-stack --namespace inference \
+  --reuse-values --set launcher.manageModels=false --wait
+```
+
+Run generated model commands from the extracted installation's root with your cluster credentials. Keep the model page open or return to it to check readiness. When capacity is unknown, verify the allocation yourself; Kubernetes still enforces GPU resource requests.
 
 ### Dashboard addresses and sign-in
 
@@ -142,11 +123,19 @@ docker logs vllm-0
 
 A failed image pull leaves the existing model running. A launcher restart retains Compose deployment progress in its state volume.
 
-For Kubernetes:
+If a Kubernetes install times out, inspect the release before retrying:
 
 ```bash
 kubectl get pods -n inference
 helm list -n inference --all
+```
+
+After resolving the pod or storage failure, reuse the release's generated values:
+
+```bash
+cd inference-stack
+helm upgrade inference-stack charts/inference-stack --namespace inference --reuse-values --wait --timeout 10m
+bash install.sh kubernetes
 ```
 
 Kubernetes model state is discovered from the cluster. If the launcher cannot deploy, use its generated command and return to the model page to check the result.
