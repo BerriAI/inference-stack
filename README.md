@@ -14,39 +14,9 @@
 
 **[Set up with Docker](#docker-compose)** &nbsp; · &nbsp; **[Set up with Kubernetes](#kubernetes)**
 
-<br>
-
-<img src="assets/launcher.png" alt="Four entry points: vLLM, LiteLLM, llm-d and Grafana" width="100%">
-
 </div>
 
-## From model to first request
-
-### vLLM
-
-Find a model on Hugging Face, check its GPU requirements, and deploy it on your hardware.
-
-<img src="assets/vllm.png" alt="Search the Hugging Face catalogue and compare estimated GPU memory before deployment" width="100%">
-
-### LiteLLM
-
-Send requests through one OpenAI-compatible endpoint, with keys, teams, and budgets in one place.
-
-<img src="assets/litellm.png" alt="LiteLLM Playground sending a request to a locally deployed simulated model" width="100%">
-
-### llm-d
-
-Route requests across healthy replicas using cache and queue signals, with defaults ready to use.
-
-<img src="assets/llmd.png" alt="Routing across two simulated replicas, with optional cache and queue weight settings" width="100%">
-
-### Grafana
-
-See model health, request traffic, and serving performance across the stack.
-
-<img src="assets/grafana.png" alt="Grafana stack overview showing the local simulation's model servers and request traffic" width="100%">
-
-## Start using it
+## Get started
 
 The installer downloads a versioned release, verifies the bundle, and generates credentials. Open **vLLM**, choose a model, then **Open LiteLLM** to send your first request.
 
@@ -103,6 +73,36 @@ Use simulation only if I choose it. Ask before provisioning paid resources.
 
 </details>
 
+
+<br>
+
+<img src="assets/launcher.png" alt="Four entry points: vLLM, LiteLLM, llm-d and Grafana" width="100%">
+
+## From model to first request
+
+### vLLM
+
+Find a model on Hugging Face, check its GPU requirements, and deploy it on your hardware.
+
+<img src="assets/vllm.png" alt="Search the Hugging Face catalogue and compare estimated GPU memory before deployment" width="100%">
+
+### LiteLLM
+
+Send requests through one OpenAI-compatible endpoint, with keys, teams, and budgets in one place.
+
+<img src="assets/litellm.png" alt="LiteLLM Playground sending a request to a locally deployed simulated model" width="100%">
+
+### llm-d
+
+Route requests across healthy replicas using cache and queue signals, with defaults ready to use.
+
+<img src="assets/llmd.png" alt="Routing across two simulated replicas, with optional cache and queue weight settings" width="100%">
+
+### Grafana
+
+See model health, request traffic, and serving performance across the stack.
+
+<img src="assets/grafana.png" alt="Grafana stack overview showing the local simulation's model servers and request traffic" width="100%">
 <br>
 
 [Setup and configuration](docs/setup.md) · [Releases](https://github.com/BerriAI/inference-stack/releases) · [Development](docs/setup.md#development) · [MIT license](LICENSE)
