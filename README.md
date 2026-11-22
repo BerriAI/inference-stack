@@ -8,7 +8,7 @@
   <a href="https://huggingface.co/models"><img src="assets/hugging-face.svg" alt="Hugging Face" height="40"></a>&nbsp;&nbsp;&nbsp;
   <a href="https://github.com/vllm-project/vllm"><img src="launcher/static/logos/vllm.png" alt="vLLM" height="40"></a>&nbsp;&nbsp;&nbsp;
   <a href="https://github.com/llm-d/llm-d"><img src="launcher/static/logos/llmd.png" alt="llm-d" height="40"></a>&nbsp;&nbsp;&nbsp;
-  <a href="https://github.com/BerriAI/litellm"><picture><source media="(prefers-color-scheme: dark)" srcset="launcher/static/logos/litellmDark.svg"><img src="launcher/static/logos/litellm.svg" alt="LiteLLM" height="40"></picture></a>&nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/BerriAI/litellm"><img src="launcher/static/logos/litellm.svg" alt="LiteLLM" height="40"></a>&nbsp;&nbsp;&nbsp;
   <a href="https://grafana.com/oss/grafana/"><img src="launcher/static/logos/grafana.svg" alt="Grafana" height="40"></a>
 </p>
 
