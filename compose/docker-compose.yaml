@@ -31,6 +31,8 @@ services:
     command: ["--config", "/app/config/config.yaml", "--port", "4000"]
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY to a generated password}
+      UI_USERNAME: admin
+      UI_PASSWORD: ${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY to a generated password}
       DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a generated password}@postgres:5432/litellm
     volumes:
       - ./litellm/config.yaml:/app/config/config.yaml:ro
@@ -42,16 +44,18 @@ services:
         condition: service_healthy
 
   launcher:
-    image: ${INFERENCE_STACK_LAUNCHER_IMAGE:-ghcr.io/berriai/inference-stack/launcher:0.1.2}
+    image: ${INFERENCE_STACK_LAUNCHER_IMAGE:-ghcr.io/berriai/inference-stack/launcher:0.2.0}
     build:
       context: ..
       dockerfile: launcher/Dockerfile
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY to a generated password}
       HF_TOKEN: ${HF_TOKEN:-}
+      HF_TOKEN_FILE: /credentials/huggingface-token
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - router-state:/state
+      - launcher-credentials:/credentials
       - ./router/epp-config.yaml:/config/epp-config.yaml:ro
     ports:
       - "127.0.0.1:8080:8080"
@@ -96,6 +100,7 @@ services:
   grafana:
     image: grafana/grafana:11.4.0
     environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY to a generated password}
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
@@ -111,3 +116,4 @@ networks:
 volumes:
   postgres:
   router-state:
+  launcher-credentials:

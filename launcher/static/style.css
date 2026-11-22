@@ -153,3 +153,29 @@ button:disabled { cursor:default; }
 @media(max-width:510px) { .stack-home { min-height:0; } .stack-main{min-height:0;} .stack-message{padding:0 18px;} }
 
 h1:focus { outline:none; }
+.stack-login { max-width:360px; margin:60px auto; }
+.stack-login label { display:block; font-size:13px; margin:28px 0 8px; }
+.stack-login input[type=password] { width:100%; border:1px solid var(--stack-line); border-radius:7px; padding:11px; background:var(--stack-bg); color:var(--stack-fg); }
+.stack-signout { margin-left:auto; }
+
+.stack-summary { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:0 0 20px; font-size:13px; }
+.stack-summary > div { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.stack-summary + .stack-home { min-height:340px; }
+.stack-secondary { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:16px 28px; padding:24px 0; font-size:12px; }
+.stack-secondary .stack-text-button { padding:0; }
+.stack-secondary .stack-blocker { margin-top:8px; font-size:12px; }
+@media(max-width:510px) { .stack-summary { align-items:flex-start; } .stack-summary .stack-text-button { white-space:nowrap; } .stack-summary + .stack-home { min-height:0; } .stack-secondary { flex-direction:column; gap:20px; } }
+
+.stack-powered { display:flex; align-items:center; gap:18px; padding:36px 0 8px; }
+.stack-powered a { display:flex; align-items:center; justify-content:center; min-width:28px; min-height:32px; opacity:.72; }
+.stack-powered a:hover { opacity:1; }
+.stack-powered .stack-logo { width:23px; height:23px; }
+.stack-rental { display:grid; grid-template-columns:1fr auto; gap:8px 16px; padding:19px 0; border-bottom:1px solid var(--stack-line); font-size:13px; }
+.stack-rental strong { font-weight:500; }
+.stack-rental p { grid-column:1/-1; color:var(--stack-muted); font-size:12px; }
+.stack-api { margin-top:25px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:12px; }
+.stack-api > span { color:var(--stack-muted); }
+.stack-api code { overflow-wrap:anywhere; }
+.stack-token { margin-top:20px; }
+.stack-token label { display:block; font-size:12px; margin:16px 0 12px; }
+.stack-token input { display:block; width:100%; margin-top:8px; padding:10px; border:1px solid var(--stack-line); border-radius:7px; background:var(--stack-bg); color:var(--stack-fg); }

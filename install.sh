@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=0.1.2
+VERSION=0.2.0
 RELEASE="https://github.com/BerriAI/inference-stack/releases/download/v$VERSION"
 mode="${1:-}"
 case "$mode" in
@@ -75,7 +75,7 @@ if [[ "$mode" == docker ]]; then
       "$(openssl rand -hex 24)" "$(openssl rand -hex 24)" "$image" > .env)
   fi
   docker compose up -d --no-build --wait </dev/null
-  printf '\nOpen http://localhost:8080\nSign in as admin with LITELLM_MASTER_KEY from compose/.env.\nChoose vLLM to deploy a model, or enable simulation in its Settings.\n'
+  printf '\nOpen http://localhost:8080\nSign in as admin with LITELLM_MASTER_KEY from compose/.env.\nChoose Deployments to deploy a model, or enable simulation in its Settings.\n'
 else
   existing="$(helm list --namespace inference --deployed --failed --pending --uninstalled --superseded --uninstalling --filter '^inference-stack$' --short)"
   if [[ -n "$existing" ]]; then

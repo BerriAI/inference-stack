@@ -11,6 +11,9 @@ spec:
       labels:
         app: inference-stack-launcher
     spec:
+      {{- with .Values.launcher.nodeSelector }}
+      nodeSelector: {{ . | toJson }}
+      {{- end }}
       serviceAccountName: {{ .Release.Name }}-launcher
       containers:
         - name: launcher
@@ -21,11 +24,33 @@ spec:
           volumeMounts:
             - name: state
               mountPath: /state
+            {{- if .Values.launcher.awsCapacity }}
+            - name: aws-capacity
+              mountPath: /run/inference-stack
+            - name: aws-info
+              mountPath: /machine
+              readOnly: true
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz
               port: 8080
           env:
+            {{- if .Values.launcher.adminSecret }}
+            - name: LAUNCHER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.launcher.adminSecret }}
+                  key: password
+            {{- end }}
+            {{- if .Values.launcher.awsCapacity }}
+            - name: AWS_CAPACITY_SOCKET
+              value: /run/inference-stack/capacity.sock
+            - name: MACHINE_INFO
+              value: /machine/info.json
+            - name: FORWARDED_ALLOW_IPS
+              value: "*"
+            {{- end }}
             - name: LITELLM_PUBLIC_URL
               value: {{ .Values.launcher.litellmPublicUrl | quote }}
             - name: GRAFANA_PUBLIC_URL
@@ -58,7 +83,23 @@ spec:
               value: {{ .Release.Name }}
       volumes:
         - name: state
+          {{- if .Values.launcher.awsCapacity }}
+          hostPath:
+            path: /etc/inference-stack/launcher
+            type: DirectoryOrCreate
+          {{- else }}
           emptyDir: {}
+          {{- end }}
+        {{- if .Values.launcher.awsCapacity }}
+        - name: aws-capacity
+          hostPath:
+            path: /run/inference-stack
+            type: Directory
+        - name: aws-info
+          hostPath:
+            path: /etc/inference-stack/public
+            type: Directory
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service

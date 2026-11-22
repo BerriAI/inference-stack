@@ -11,6 +11,23 @@ from test_launcher import app
 
 class ChartTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
+    def test_aws_host_access_is_opt_in_and_uses_admin_secret(self):
+        chart = Path(__file__).resolve().parents[1] / "charts/inference-stack"
+        for enabled in (False, True):
+            values = {"litellm": {"postgresql": {"auth": {"password": "test-only-database-password-0123456789", "postgres-password": "test-only-database-admin-0123456789"}}},
+                      "launcher": {"awsCapacity": enabled, "adminSecret": "test-only-admin" if enabled else "", "nodeSelector": {"inference-stack/role": "control"} if enabled else {}}}
+            result = subprocess.run(["helm", "template", "inference-stack", str(chart), "--values", "-"],
+                                    input=json.dumps(values), text=True, capture_output=True, timeout=20, check=True)
+            resources = [r for r in yaml.safe_load_all(result.stdout) if r]
+            launcher = next(r for r in resources if r["kind"] == "Deployment" and r["metadata"]["name"] == "inference-stack-launcher")["spec"]["template"]["spec"]
+            environment = {v["name"]: v for v in launcher["containers"][0]["env"]}
+            self.assertEqual("AWS_CAPACITY_SOCKET" in environment, enabled)
+            self.assertEqual(any("hostPath" in v for v in launcher["volumes"]), enabled)
+            if enabled:
+                self.assertEqual(launcher["nodeSelector"], {"inference-stack/role": "control"})
+                self.assertEqual(environment["LAUNCHER_PASSWORD"]["valueFrom"]["secretKeyRef"]["name"], "test-only-admin")
+
+    @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
     def test_each_model_mounts_its_own_rendered_router_configuration(self):
         chart = Path(__file__).resolve().parents[1] / "charts/model"
         request = app.AddModel(model="Qwen/Qwen3-0.6B", simulate=True)

@@ -24,7 +24,8 @@ class LauncherTests(unittest.TestCase):
 
     def test_admin_access_is_required_for_reads_and_mutations(self):
         anonymous = TestClient(app.app)
-        for method, path, body in [("GET", "/api/status", None), ("POST", "/api/models", {"model":"org/model","simulate":True}), ("DELETE", "/api/models/example", None)]:
+        for method, path, body in [("GET", "/api/status", None), ("POST", "/api/models", {"model":"org/model","simulate":True}), ("DELETE", "/api/models/example", None),
+                                   ("POST", "/api/gpus", {"expected": 0, "desired": 1}), ("DELETE", "/api/gpus/i-0123456789abcdef0", None)]:
             response = anonymous.request(method, path, json=body)
             self.assertEqual(response.status_code, 401)
             self.assertIn("Basic", response.headers["www-authenticate"])
@@ -32,11 +33,77 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(anonymous.get("/api/status", auth=("admin", "incorrect")).status_code, 401)
         self.assertEqual(anonymous.get("/api/status", headers={"Authorization":"Basic invalid"}).status_code, 401)
 
+    def test_gpu_changes_are_disabled_without_aws_and_reject_concurrent_deployment(self):
+        with patch.object(app.settings, "AWS_CAPACITY_SOCKET", ""):
+            self.assertEqual(self.client.post('/api/gpus', json={'expected': 0, 'desired': 1}).status_code, 404)
+        app.operation_lock.acquire()
+        with patch.object(app, 'capacity_request') as request:
+            self.assertEqual(self.client.post('/api/gpus', json={'expected': 0, 'desired': 1}).status_code, 409)
+            self.assertEqual(self.client.delete('/api/gpus/i-0123456789abcdef0').status_code, 409)
+            request.assert_not_called()
+        app.operation_lock.release()
+
+    def test_gpu_api_preserves_quota_errors_and_releases_operation_lock(self):
+        with patch.object(app, 'capacity_request', side_effect=app.HTTPException(409, 'GPU quota is zero. No GPU was added.')):
+            response = self.client.post('/api/gpus', json={'expected': 0, 'desired': 1})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('No GPU was added', response.json()['detail'])
+        self.assertFalse(app.operation_lock.locked())
+
     def test_example_passwords_are_rejected(self):
         for value in ("", "change-me", "sk-change-me", "NoTaGrEaTpAsSwOrD", "a" * 40):
             with self.assertRaises(ValueError):
                 app.settings.validate_password("EXAMPLE", value)
         self.assertEqual(app.settings.validate_password("EXAMPLE", "test-only-not-a-real-key-0123456789"), "test-only-not-a-real-key-0123456789")
+
+    def test_browser_login_uses_cookie_without_repeated_password_dialogs(self):
+        browser = TestClient(app.app, base_url="https://testserver")
+        response = browser.get("/", headers={"Accept": "text/html"}, follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/login")
+        self.assertEqual(browser.get("/login").status_code, 200)
+        response = browser.get("/api/status", headers={"Sec-Fetch-Site": "same-origin"})
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn("www-authenticate", response.headers)
+        self.assertEqual(browser.post("/api/login", json={"password": "incorrect"}).status_code, 401)
+        oversized = "test-only-private-value-" * 200
+        response = browser.post("/api/login", json={"password": oversized})
+        self.assertEqual(response.status_code, 422)
+        self.assertNotIn("test-only-private-value", response.text)
+        response = browser.post("/api/login", json={"password": app.settings.LAUNCHER_PASSWORD}, headers={"Origin": "https://testserver"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("HttpOnly", response.headers["set-cookie"])
+        self.assertIn("Secure", response.headers["set-cookie"])
+        self.assertIn("SameSite=lax", response.headers["set-cookie"])
+        self.assertEqual(browser.get("/").status_code, 200)
+        self.assertEqual(browser.post("/api/logout", headers={"Origin": "https://testserver"}).status_code, 200)
+        self.assertEqual(browser.get("/api/status", headers={"Sec-Fetch-Site": "same-origin"}).status_code, 401)
+
+    def test_session_expiry_tampering_and_cross_origin_login(self):
+        value = f"{int(app.time.time()) + 60}.test-nonce"
+        signed = f"{value}.{app.session_signature(value)}"
+        self.assertTrue(app.valid_session(signed))
+        self.assertFalse(app.valid_session(signed + "tampered"))
+        with patch.object(app.time, "time", return_value=app.time.time() + 61):
+            self.assertFalse(app.valid_session(signed))
+        with patch.object(app.settings, "LAUNCHER_PASSWORD", "test-only-changed-password-0123456789"):
+            self.assertFalse(app.valid_session(signed))
+        response = self.client.post("/api/login", json={"password": app.settings.LAUNCHER_PASSWORD}, headers={"Origin": "https://example.com"})
+        self.assertEqual(response.status_code, 403)
+
+    def test_gpu_memory_use_is_reported_separately_from_detected_devices(self):
+        from unittest.mock import Mock
+        docker = Mock()
+        docker.info.return_value = {"Runtimes": {"nvidia": {}}}
+        probe = docker.containers.run.return_value
+        probe.wait.return_value = {"StatusCode": 0}
+        probe.logs.return_value = b"NVIDIA A10G, 23028, 10240\n"
+        with patch.object(app.compose_backend, "_docker", return_value=docker):
+            hardware = app.compose_backend.gpu_inventory()
+        self.assertEqual(hardware["count"], 1)
+        self.assertEqual(hardware["devices"][0]["used_gb"], 10)
+        self.assertEqual(hardware["devices"][0]["memory_gb"], 22.5)
+        probe.remove.assert_called_once_with(force=True)
 
     def test_removal_can_retry_registration_cleanup_after_workload_is_gone(self):
         app.deployment.update(action="remove", name="example", error="Removal failed")
