@@ -127,7 +127,7 @@ If a Kubernetes install times out, inspect the release before retrying:
 
 ```bash
 kubectl get pods -n inference
-helm list -n inference --all
+helm list -n inference --deployed --failed --pending --uninstalling
 ```
 
 After resolving the pod or storage failure, reuse the release's generated values:
