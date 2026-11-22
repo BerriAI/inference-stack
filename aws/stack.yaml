@@ -1,0 +1,341 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Inference Stack on one A10G GPU in Ohio. Compute is $1.212/hour, plus 200 GB of disk, public IPv4 and network charges. Stops after 4 hours by default; disk charges continue until deletion.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Sign in to Inference Stack
+        Parameters: [Password]
+      - Label:
+          default: Trial settings
+        Parameters: [StopAfterHours]
+    ParameterLabels:
+      Password:
+        default: Admin password
+      StopAfterHours:
+        default: Stop the machine after this many hours
+
+Parameters:
+  Password:
+    Type: String
+    NoEcho: true
+    MinLength: 20
+    MaxLength: 128
+    AllowedPattern: '[A-Za-z0-9_@%+=:,./!?~-]+'
+    Description: Use your password manager to create a password of at least 20 characters. Username is admin.
+  StopAfterHours:
+    Type: Number
+    Default: 4
+    AllowedValues: [1, 2, 4, 8, 12, 24]
+    Description: Compute stops automatically. Stored models and disk charges remain until you delete this stack.
+
+Resources:
+  PrerequisiteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InspectPrerequisites
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstanceTypeOfferings
+                  - ec2:DescribeSecurityGroups
+                  - servicequotas:GetServiceQuota
+                Resource: '*'
+  PrerequisiteFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 90
+      Role: !GetAtt PrerequisiteRole.Arn
+      Code:
+        ZipFile: |
+          import datetime
+          import json
+          import urllib.request
+          import boto3
+
+          def prepare(properties):
+              ec2 = boto3.client('ec2')
+              if properties['Operation'] == 'OriginGroup':
+                  groups = ec2.describe_security_groups(Filters=[
+                      {'Name': 'vpc-id', 'Values': [properties['VpcId']]},
+                      {'Name': 'group-name', 'Values': ['CloudFront-VPCOrigins-Service-SG*']}])['SecurityGroups']
+                  if len(groups) != 1:
+                      raise ValueError('CloudFront did not create its private access group. Retry the stack.')
+                  return {'GroupId': groups[0]['GroupId']}
+              if ec2.meta.region_name != 'us-east-2':
+                  raise ValueError('This release supports US East (Ohio). Choose us-east-2, then retry.')
+              simulation = properties['Simulate'] == 'true'
+              instance = 'm6i.xlarge' if simulation else 'g5.2xlarge'
+              quota_code = 'L-1216C47A' if simulation else 'L-DB2E81BA'
+              required = 4 if simulation else 8
+              quota = boto3.client('service-quotas').get_service_quota(ServiceCode='ec2', QuotaCode=quota_code)['Quota']['Value']
+              if quota < required:
+                  kind = 'Standard' if simulation else 'G and VT'
+                  raise ValueError(f'AWS allows {int(quota)} {kind} vCPUs in this region; this installation needs {required}. Request an EC2 quota increase in AWS Service Quotas, then retry. No GPU was launched.')
+              offerings = ec2.describe_instance_type_offerings(LocationType='availability-zone', Filters=[{'Name': 'instance-type', 'Values': [instance]}])['InstanceTypeOfferings']
+              zones = sorted(row['Location'] for row in offerings)
+              if not zones:
+                  raise ValueError('This machine type is not offered in this region. Launch in US East (Ohio).')
+              stop = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=int(properties['Hours']))
+              return {'InstanceType': instance, 'Zone': zones[0], 'StopAt': stop.strftime('%Y-%m-%dT%H:%M:%S')}
+
+          def handler(event, context):
+              data, status, reason = {}, 'SUCCESS', 'AWS setup prerequisites passed.'
+              try:
+                  if event['RequestType'] != 'Delete':
+                      data = prepare(event['ResourceProperties'])
+              except ValueError as error:
+                  status, reason = 'FAILED', str(error)
+              except Exception:
+                  status, reason = 'FAILED', 'AWS prerequisite check failed. Check permission to read EC2 and Service Quotas, then retry.'
+              response = {'Status': status, 'Reason': reason, 'PhysicalResourceId': event.get('PhysicalResourceId', event['LogicalResourceId']),
+                          'StackId': event['StackId'], 'RequestId': event['RequestId'], 'LogicalResourceId': event['LogicalResourceId'], 'Data': data}
+              request = urllib.request.Request(event['ResponseURL'], data=json.dumps(response).encode(), method='PUT', headers={'Content-Type': ''})
+              with urllib.request.urlopen(request, timeout=30):
+                  pass
+  Prerequisites:
+    Type: Custom::InferenceStackPrerequisites
+    Properties:
+      ServiceToken: !GetAtt PrerequisiteFunction.Arn
+      Operation: Prepare
+      Simulate: 'false'
+      Hours: !Ref StopAfterHours
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    DependsOn: Prerequisites
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !GetAtt Prerequisites.Zone
+      CidrBlock: 10.42.0.0/24
+      MapPublicIpOnLaunch: true
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+  InternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  SubnetRoute:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref Subnet
+  MachineSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow the private CloudFront connection only. No SSH or public inbound access.
+      VpcId: !Ref Vpc
+
+  AdminPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Inference Stack admin password
+      SecretString: !Ref Password
+  MachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ConfigureThisInstallation
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref AdminPassword
+              - Effect: Allow
+                Action: [cloudformation:DescribeStackResource, cloudformation:SignalResource]
+                Resource: !Ref AWS::StackId
+              - Effect: Allow
+                Action: cloudfront:GetDistribution
+                Resource: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*
+  MachineProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref MachineRole]
+  Machine:
+    Type: AWS::EC2::Instance
+    DependsOn: [InternetRoute, SubnetRoute]
+    Properties:
+      ImageId: '{{resolve:ssm:/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id}}'
+      InstanceType: !GetAtt Prerequisites.InstanceType
+      IamInstanceProfile: !Ref MachineProfile
+      SubnetId: !Ref Subnet
+      SecurityGroupIds: [!Ref MachineSecurityGroup]
+      InstanceInitiatedShutdownBehavior: stop
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 200
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          export AWS_DEFAULT_REGION='${AWS::Region}'
+          export STACK_ID='${AWS::StackId}'
+          export PASSWORD_SECRET='${AdminPassword}'
+          export STOP_AFTER_HOURS='${StopAfterHours}'
+          export INITIAL_STOP_AT='${Prerequisites.StopAt}'
+          export SIMULATE='false'
+          export STACK_VERSION='@VERSION@'
+          directory=$(mktemp -d)
+          trap 'rm -rf "$directory"' EXIT
+          trap 'aws cloudformation signal-resource --stack-name "$STACK_ID" --logical-resource-id Ready --unique-id installer --status FAILURE >/dev/null 2>&1 || true' ERR
+          release="https://github.com/BerriAI/inference-stack/releases/download/v$STACK_VERSION"
+          curl -fsSL --retry 3 "$release/aws-bootstrap.py" -o "$directory/aws-bootstrap.py"
+          curl -fsSL --retry 3 "$release/SHA256SUMS" -o "$directory/SHA256SUMS"
+          (cd "$directory"; awk '$2 == "aws-bootstrap.py"' SHA256SUMS | sha256sum --check --strict -)
+          python3 "$directory/aws-bootstrap.py"
+
+  VpcOrigin:
+    Type: AWS::CloudFront::VpcOrigin
+    DependsOn: GatewayAttachment
+    Properties:
+      VpcOriginEndpointConfig:
+        Arn: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Machine}
+        Name: !Ref AWS::StackName
+        HTTPPort: 80
+        OriginProtocolPolicy: http-only
+  OriginGroup:
+    Type: Custom::InferenceStackOriginGroup
+    DependsOn: VpcOrigin
+    Properties:
+      ServiceToken: !GetAtt PrerequisiteFunction.Arn
+      Operation: OriginGroup
+      VpcId: !Ref Vpc
+  PrivateAccess:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MachineSecurityGroup
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !GetAtt OriginGroup.GroupId
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: PrivateAccess
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Inference Stack
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: stack
+            DomainName: !GetAtt Machine.PrivateDnsName
+            VpcOriginConfig:
+              VpcOriginId: !GetAtt VpcOrigin.Id
+              OriginReadTimeout: 120
+        DefaultCacheBehavior:
+          TargetOriginId: stack
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachedMethods: [GET, HEAD]
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+  Ready:
+    Type: AWS::CloudFormation::WaitCondition
+    DependsOn: Machine
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT90M
+
+  StopRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: StopThisMachine
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ec2:StopInstances
+                Resource: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Machine}
+  StopSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Description: Stop the initial trial even if installation does not finish.
+      ScheduleExpression: !Sub at(${Prerequisites.StopAt})
+      ScheduleExpressionTimezone: UTC
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      Target:
+        Arn: !Sub arn:${AWS::Partition}:scheduler:::aws-sdk:ec2:stopInstances
+        RoleArn: !GetAtt StopRole.Arn
+        Input: !Sub '{"InstanceIds":["${Machine}"]}'
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 3600
+          MaximumRetryAttempts: 3
+
+Outputs:
+  OpenInferenceStack:
+    Description: Open the ready model. Sign in as admin with the password you chose.
+    Value: !Sub https://${Distribution.DomainName}/#model/Qwen%2FQwen3-4B
+  ManageMachine:
+    Description: Start or stop this machine. Stopping ends compute charges; storage charges continue.
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/ec2/home?region=${AWS::Region}#InstanceDetails:instanceId=${Machine}
+  DeleteInstallation:
+    Description: Delete this CloudFormation stack to remove the machine and its stored data.
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudformation/home?region=${AWS::Region}#/stacks/stackinfo?stackId=${AWS::StackId}

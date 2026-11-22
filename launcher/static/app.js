@@ -7,6 +7,7 @@ let searchTimer, searchController, detailController, busy = false, lastStatus = 
 
 async function api(path, options = {}) {
   const response = await fetch(path, {headers:{'Content-Type':'application/json'}, ...options});
+  if (response.status === 401) { location.replace('/login' + location.hash); throw new Error('Sign in to continue.'); }
   const body = await response.json();
   if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Check the entered values and try again.');
   return body;
@@ -21,8 +22,9 @@ function button(text, action, primary = false, disabled = false) {
   return `<button type="button" class="stack-button ${primary?'primary':''}" data-action="${action}" ${disabled?'disabled':''}>${text}</button>`;
 }
 function textButton(text, action) { return `<button type="button" class="stack-text-button" data-action="${action}">${text}</button>`; }
-function external(key, text, primary = false) {
-  const url = state.status.components[key]?.url;
+function external(key, text, primary = false, suffix = '') {
+  const base = state.status.components[key]?.url;
+  const url = base ? base.replace(/\/$/, '') + suffix : '';
   if (!url || !/^https?:\/\//.test(url)) return '';
   return `<a class="${primary?'stack-button primary':'stack-text-button'}" href="${escape(url)}" target="_blank" rel="noopener noreferrer">${text} ↗</a>`;
 }
@@ -37,11 +39,24 @@ function hardware() {
   const types = [...new Set(h.devices.map(d => `${d.name}${d.memory_gb?' · '+d.memory_gb+' GB':''}`))];
   return `${h.count} GPU${h.count===1?'':'s'} · ${types.join(', ')}`;
 }
+function hardwareLink() { return `<a href="#gpus">${escape(hardware())} →</a>`; }
+function machinePage() {
+  const h = state.status.hardware, m = state.status.machine;
+  const awsLink = (url, label) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'https:' || !/^[a-z0-9-]+\.console\.aws\.amazon\.com$/.test(parsed.hostname)) return '';
+      return `<a class="stack-button" href="${escape(url)}" target="_blank" rel="noopener noreferrer">${label} ↗</a>`;
+    } catch { return ''; }
+  };
+  const stop = m?.stop_at ? new Date(m.stop_at) : null;
+  return `<div class="stack-content"><div class="stack-back">${textButton('← Models','vllm')}</div><div class="stack-heading"><h1 tabindex="-1">GPUs</h1>${textButton('Refresh','refresh')}</div>${h.error?`<p class="stack-blocker">${escape(h.error)}</p>`:''}${h.devices.length?`<table class="stack-table"><thead><tr><th>GPU</th><th>Memory</th><th>${state.status.mode==='compose'?'Memory used':'Available GPUs'}</th></tr></thead><tbody>${h.devices.map(d=>`<tr><td>${escape(d.name)}${d.count>1?` × ${d.count}`:''}</td><td>${d.memory_gb?escape(d.memory_gb)+' GB':'Unknown'}</td><td>${state.status.mode==='compose'?(d.used_gb==null?'Unknown':escape(d.used_gb)+' GB'):escape(d.available)+' / '+escape(d.count)}</td></tr>`).join('')}</tbody></table>`:''}<p class="stack-note">${state.status.mode==='compose'?'GPUs on this Docker host. Memory used includes other applications. Detected GPUs may already be busy.':'GPUs on ready, schedulable cluster nodes. Availability excludes resources allocated to pods.'}</p>${m?.provider==='aws'?`<div class="stack-allocation"><div><strong>AWS${m.instance_type?' · '+escape(m.instance_type):''}</strong><p>${escape(m.region || '')}${Number.isFinite(m.hourly_usd)?' · $'+m.hourly_usd.toFixed(3)+'/hour for compute':''}</p></div></div><p class="stack-note">${stop && Number.isFinite(stop.getTime())?'Stops automatically at '+escape(stop.toLocaleString())+'. ':'Stop timer unavailable. Check the instance in AWS. '}Storage, network and other AWS charges are additional. Removing a model does not stop the machine.</p><div class="stack-actions">${awsLink(m.manage_url,'Manage in AWS')}${awsLink(m.delete_url,'Delete installation')}</div><p class="stack-note">Stop or restart this machine in AWS. To return, start it and open your saved Inference Stack link. Delete the CloudFormation stack to remove the machine and its stored data.</p>`:''}</div>`;
+}
 function selectedModel() { return state.status.models.find(m => m.served_model === route().id); }
 function selectedDeployment() { return state.status.deployment.request?.model === route().id ? state.status.deployment : null; }
 function header() {
   const section = route().page === 'home' ? '' : route().page === 'routing' ? 'llm-d' : 'vLLM';
-  return `<header class="stack-header"><button class="stack-brand" data-action="home">inference stack</button>${section?`<nav class="stack-crumb" aria-label="Breadcrumb"><span aria-hidden="true">/</span><button data-action="${section==='llm-d'?'routing':'vllm'}">${section}</button></nav>`:''}</header>`;
+  return `<header class="stack-header"><button class="stack-brand" data-action="home">inference stack</button>${section?`<nav class="stack-crumb" aria-label="Breadcrumb"><span aria-hidden="true">/</span><button data-action="${section==='llm-d'?'routing':'vllm'}">${section}</button></nav>`:''}<button class="stack-text-button stack-signout" data-action="logout">Sign out</button></header>`;
 }
 function home() {
   const s = state.status;
@@ -75,12 +90,12 @@ function results() {
   }).join('')}${!state.results.length?'<p class="stack-note">No models found. Try another name or a full model ID.</p>':''}${state.cursor?`<div class="stack-actions">${button(state.searching?'Loading…':'Show more','more',false,state.searching)}</div>`:''}<p class="stack-note">Estimates vary with context length, quantization and vLLM support.</p>`;
 }
 function catalogue() {
-  return `<div class="stack-content"><div class="stack-heading"><div><h1 tabindex="-1">Add a model</h1><p class="stack-sub">${escape(hardware())}</p></div>${state.status.models.length?textButton('Your models','models'):''}</div><input class="stack-search" type="search" aria-label="Search Hugging Face models" placeholder="Search Hugging Face models" value="${escape(state.query)}" autocomplete="off"><div id="results">${results()}</div></div>`;
+  return `<div class="stack-content"><div class="stack-heading"><div><h1 tabindex="-1">Add a model</h1><p class="stack-sub">${hardwareLink()}</p></div>${state.status.models.length?textButton('Your models','models'):''}</div><input class="stack-search" type="search" aria-label="Search Hugging Face models" placeholder="Search Hugging Face models" value="${escape(state.query)}" autocomplete="off"><div id="results">${results()}</div></div>`;
 }
 function modelList() {
   const rows = state.status.models;
   const pending = state.status.deployment;
-  return `<div class="stack-content"><div class="stack-heading"><div><h1 tabindex="-1">Models</h1><p class="stack-sub">${escape(hardware())}</p></div>${button('Add model','catalogue',true)}</div>${state.status.errors.map(e=>`<p class="stack-blocker">${escape(e)}</p>`).join('')}${rows.length?`<table class="stack-table"><thead><tr><th>Model</th><th>Allocation</th><th>Status</th></tr></thead><tbody>${rows.map(m=>`<tr><td><button class="stack-model-link" data-model="${escape(m.served_model)}">${escape(m.served_model.split('/').at(-1))}</button><small>${escape(m.served_model)}</small></td><td>${m.simulate?'Simulated':m.replicas*m.gpus_per_replica+' GPUs'} · ${m.replicas} replica${m.replicas===1?'':'s'}</td><td>${m.status==='ready'?'Ready':'Starting…'}</td></tr>`).join('')}</tbody></table>`:'<p class="stack-note">No models deployed yet.</p>'}${pending.request && (pending.step || pending.error)?`<div class="stack-actions"><button class="stack-text-button" data-model="${escape(pending.request.model)}">${escape(pending.step || 'Review deployment')} →</button></div>`:''}</div>`;
+  return `<div class="stack-content"><div class="stack-heading"><div><h1 tabindex="-1">Models</h1><p class="stack-sub">${hardwareLink()}</p></div>${button('Add model','catalogue',true)}</div>${state.status.errors.map(e=>`<p class="stack-blocker">${escape(e)}</p>`).join('')}${rows.length?`<table class="stack-table"><thead><tr><th>Model</th><th>Allocation</th><th>Status</th></tr></thead><tbody>${rows.map(m=>`<tr><td><button class="stack-model-link" data-model="${escape(m.served_model)}">${escape(m.served_model.split('/').at(-1))}</button><small>${escape(m.served_model)}</small></td><td>${m.simulate?'Simulated':m.replicas*m.gpus_per_replica+' GPUs'} · ${m.replicas} replica${m.replicas===1?'':'s'}</td><td>${m.status==='ready'?'Ready':'Starting…'}</td></tr>`).join('')}</tbody></table>`:'<p class="stack-note">No models deployed yet.</p>'}${pending.request && (pending.step || pending.error)?`<div class="stack-actions"><button class="stack-text-button" data-model="${escape(pending.request.model)}">${escape(pending.step || 'Review deployment')} →</button></div>`:''}</div>`;
 }
 function allocationProblem(info, request) {
   if (request.simulate) return '';
@@ -113,11 +128,11 @@ function modelPage() {
   if (!state.info && !existing && !pending) return `<div class="stack-content"><h1>${escape(id)}</h1>${state.modelError?`<p class="stack-blocker">${escape(state.modelError)}</p><div class="stack-actions">${button('Retry model check','refresh-model',true)}${textButton('Choose another model','catalogue')}</div>`:'<p role="status">Checking this model…</p>'}</div>`;
   const info = state.info || {id, estimated_gb:null};
   const request = existing || (progress ? pending.request : state.request);
-  const allocation = `<div class="stack-allocation"><div><strong>${allocationTitle(request)}</strong><p>${request.simulate?'No GPU required':escape(hardware())}</p></div>${info.estimated_gb && !request.simulate?`<span class="stack-small stack-muted">≈ ${info.estimated_gb} GB per replica</span>`:''}</div>`;
+  const allocation = `<div class="stack-allocation"><div><strong>${allocationTitle(request)}</strong><p>${request.simulate?'No GPU required':hardwareLink()}</p></div>${info.estimated_gb && !request.simulate?`<span class="stack-small stack-muted">≈ ${info.estimated_gb} GB per replica</span>`:''}</div>`;
   let content = '';
   if (progress) content = `${allocation}<p class="stack-note" role="status">${escape(progress)}…</p><p class="stack-note">You can leave this page while it starts.</p>`;
   else if (pending?.action==='remove' && pending.error) content = `${allocation}<p class="stack-blocker" role="alert">${escape(pending.error)}</p><div class="stack-actions">${button('Retry removal','retry-remove',true)}</div>`;
-  else if (ready) content = `${allocation}<div class="stack-actions">${external('litellm','Open LiteLLM',true)}${external('grafana','View in Grafana')}</div><p class="stack-note">${existing.simulate?'Simulation returns canned text. ':''}LiteLLM routes to this model; llm-d selects a replica.</p><div class="stack-actions">${textButton('Remove model','remove')}</div>`;
+  else if (ready) content = `${allocation}<div class="stack-actions">${external('litellm','Open LiteLLM',true,'/playground/')}${external('grafana','View in Grafana')}</div><p class="stack-note">${existing.simulate?'Simulation returns canned text. ':''}Select <code>${escape(existing.name)}</code> in LiteLLM Playground and send a message.</p><div class="stack-actions">${textButton('Remove model','remove')}</div>`;
   else {
     const replacement = state.status.mode==='compose' && state.status.models.some(m=>m.served_model!==id);
     const blocker = allocationProblem(info,state.request);
@@ -140,7 +155,7 @@ function routingFields() {
 function render(focus = false) {
   if (!state.status) return;
   const page = route().page;
-  app.innerHTML = header()+`<main class="stack-main">${page==='home'?home():page==='catalogue'?catalogue():page==='models'?modelList():page==='model'?modelPage():page==='routing'?routingPage():home()}</main>`;
+  app.innerHTML = header()+`<main class="stack-main">${page==='home'?home():page==='catalogue'?catalogue():page==='models'?modelList():page==='model'?modelPage():page==='routing'?routingPage():page==='gpus'?machinePage():home()}</main>`;
   app.querySelector('details')?.addEventListener('toggle', e => {
     if (page==='routing') state.routingOpen=e.target.open;
     else state.settingsOpen=e.target.open;
@@ -218,6 +233,7 @@ app.addEventListener('click', async e => {
   if(action==='search'||action==='more'){search(action==='more');return;}
   if(action==='refresh'){await refresh();return;}
   if(action==='refresh-model'){await refresh();await loadModel();return;}
+  if(action==='logout'){await api('/api/logout',{method:'POST'});location.replace('/login');return;}
   if(busy)return;
   say();
   if([...app.querySelectorAll('input')].some(input=>!input.reportValidity())) return;

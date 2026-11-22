@@ -36,6 +36,27 @@ The launcher installs each model and its router as a Helm release in this namesp
 
 Use a dedicated namespace: the launcher has deployment access there, including access to Helm release secrets. It also reads GPU nodes and pod allocations to estimate capacity. Keep the launcher behind port-forwarding or an HTTPS reverse proxy with your organization's access controls. [Limited-permission installations](#kubernetes-permissions) can generate commands instead.
 
+## AWS
+
+The AWS launch flow is in development and is not included in v0.1.2. The website button stays disabled until a released template passes the full GPU and browser checks.
+
+The template in `aws/stack.yaml` creates one `g5.2xlarge` in US East (Ohio): an NVIDIA A10G with 24 GB of GPU memory, a 200 GB encrypted disk, HTTPS access, and Qwen3-4B. It uses Docker Compose; no Kubernetes cluster is required. Model weights download from Hugging Face without an account.
+
+The intended release flow is:
+
+1. Choose **AWS → Launch on AWS** on the website. Sign into the AWS account that will own and pay for the installation.
+2. Choose an admin password, review the template, acknowledge the IAM permissions, and choose **Create stack**. The default stop time is four hours.
+3. Wait for `CREATE_COMPLETE`, then open **Outputs → OpenInferenceStack**. Sign in with your chosen password.
+4. On the ready model, choose **Open LiteLLM**. Sign in as `admin` with the same password, choose the model in Playground, and send a message.
+
+Compute costs $1.212/hour in Ohio, plus disk, public IPv4, network, and other AWS charges. An account needs at least 8 **Running On-Demand G and VT instances** vCPUs in its Ohio EC2 quota. The template checks this before creating a GPU machine. A sufficient quota does not guarantee instance capacity; AWS may still reject the launch when capacity is unavailable.
+
+**Stopping and returning:** open the GPU details from a model page, then choose **Manage in AWS**. Stop or start the instance there. The stop timer runs again on each boot. Keep the same Inference Stack URL for your next visit; allow the services and model time to restart. Stopping compute preserves the disk and its charges. Removing a model does not stop compute.
+
+**Removing everything:** choose **Delete installation**, then delete the CloudFormation stack in AWS. This deletes the instance and its disk, including downloaded models and the database. Check that deletion finishes; if AWS reports `DELETE_FAILED`, resolve the named resource and retry deletion.
+
+If setup fails, read the failed event in CloudFormation. For a quota error, request an increase in AWS Service Quotas, then launch again after approval. For a bootstrap failure, inspect the instance with AWS Systems Manager. Do not put a key in a URL or open public SSH access. Keep the original password on an existing installation; changing only the CloudFormation password parameter does not rotate every service's stored credentials.
+
 ## Your first request
 
 1. Open **vLLM** in the launcher. Choose **Add model** if models are already deployed.
@@ -238,6 +259,7 @@ docker build -f launcher/Dockerfile -t inference-stack-launcher:dev .
 | --- | --- |
 | `compose/` | Docker Compose stack and configuration |
 | `launcher/` | Web app and deployment integrations |
+| `aws/` | Single-machine CloudFormation template and bootstrap |
 | `charts/inference-stack/` | LiteLLM, Postgres, Prometheus, Grafana, and launcher |
 | `charts/model/` | One model's vLLM deployment, llm-d router, and LiteLLM registration |
 

@@ -138,7 +138,7 @@ def wait_until_ready(timeout_seconds: int = 3600) -> None:
 
 def gpu_inventory() -> dict:
     """Probe the Docker host, including when the launcher itself has no GPU devices."""
-    command = ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]
+    command = ["nvidia-smi", "--query-gpu=name,memory.total,memory.used", "--format=csv,noheader,nounits"]
     probe = None
     try:
         if not has_gpu():
@@ -156,8 +156,9 @@ def gpu_inventory() -> dict:
             output = probe.logs().decode()
         devices = []
         for line in output.strip().splitlines():
-            name, memory = line.rsplit(",", 1)
-            devices.append({"name": name.strip(), "memory_gb": round(float(memory) / 1024, 1), "count": 1, "available": 1})
+            name, memory, used = line.rsplit(",", 2)
+            devices.append({"name": name.strip(), "memory_gb": round(float(memory) / 1024, 1),
+                            "used_gb": round(float(used) / 1024, 1), "count": 1, "available": 1})
         return {"count": len(devices), "devices": devices, "error": ""}
     except Exception:
         return {"count": None, "devices": [], "error": "Could not inspect GPU capacity. Check Docker and the NVIDIA driver, then retry."}

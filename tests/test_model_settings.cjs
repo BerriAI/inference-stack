@@ -11,7 +11,7 @@ before(async () => {
 });
 after(async () => { await browser?.close(); });
 
-async function modelPage(gpus = 8) {
+async function modelPage(gpus = 8, overrides = {}) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
   const submitted = [];
@@ -20,6 +20,7 @@ async function modelPage(gpus = 8) {
     permissions: {deploy: true, read: true}, errors: [], models: [],
     deployment: {request: null, step: '', error: ''},
     components: {litellm: {healthy: true}, grafana: {healthy: true}, router: {healthy: true}},
+    ...overrides,
   };
   const info = {id: 'example/model', suggested_gpus: 1, suggested_context: 4096, max_context: 32768};
   await page.route('http://inference-stack.test/**', async route => {
@@ -35,7 +36,7 @@ async function modelPage(gpus = 8) {
     return route.fulfill({body: fs.readFileSync(path.join(root, file)), contentType: types[path.extname(file)] || 'image/png'});
   });
   await page.goto('http://inference-stack.test/#model/example%2Fmodel');
-  await page.getByText('Settings', {exact: true}).click();
+  if (!status.models.length) await page.getByText('Settings', {exact: true}).click();
   return {page, submitted};
 }
 
@@ -69,5 +70,34 @@ test('GPU allocation updates and recovers without replacing the focused input', 
     await request;
     assert.equal(submitted.length, 1);
     assert.equal(submitted[0].replicas, 2);
+  } finally { await page.close(); }
+});
+
+test('GPU details distinguish detected memory use and expose safe AWS lifecycle links', async () => {
+  const {page} = await modelPage(1, {
+    hardware: {count: 1, error: '', devices: [{name: 'NVIDIA A10G', memory_gb: 22.5, used_gb: 10, count: 1, available: 1}]},
+    machine: {provider: 'aws', instance_type: 'g5.2xlarge', hourly_usd: 1.212, region: 'us-east-2',
+      stop_at: '2026-11-22T16:00:00Z', manage_url: 'https://us-east-2.console.aws.amazon.com/ec2/home', delete_url: 'javascript:alert(1)'},
+  });
+  try {
+    await page.getByRole('link', {name: /1 GPU/}).click();
+    await page.getByRole('heading', {name: 'GPUs', exact: true}).waitFor();
+    assert.equal(await page.getByRole('cell', {name: '10 GB', exact: true}).count(), 1);
+    assert.match(await page.locator('main').innerText(), /Detected GPUs may already be busy/);
+    assert.match(await page.locator('main').innerText(), /Removing a model does not stop the machine/);
+    assert.equal(await page.getByRole('link', {name: 'Manage in AWS ↗', exact: true}).count(), 1);
+    assert.equal(await page.getByRole('link', {name: 'Delete installation ↗', exact: true}).count(), 0);
+  } finally { await page.close(); }
+});
+
+test('Ready model opens the native Playground and identifies its API model name', async () => {
+  const {page} = await modelPage(1, {
+    models: [{served_model: 'example/model', name: 'example-model', status: 'ready', replicas: 1, gpus_per_replica: 1, simulate: true}],
+    components: {litellm: {healthy: true, url: 'https://example.com/litellm/ui'}, grafana: {healthy: true}, router: {healthy: true}},
+  });
+  try {
+    assert.equal(await page.getByRole('link', {name: 'Open LiteLLM ↗'}).getAttribute('href'), 'https://example.com/litellm/ui/playground/');
+    assert.match(await page.locator('main').innerText(), /Select example-model/);
+    assert.match(await page.locator('main').innerText(), /Simulation returns canned text/);
   } finally { await page.close(); }
 });

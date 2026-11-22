@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Inference Stack</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="stack-app">
+  <header class="stack-header"><span class="stack-brand">inference stack</span></header>
+  <main class="stack-main">
+    <form class="stack-login">
+      <h1>Sign in</h1>
+      <p class="stack-sub">Use the admin password for this installation.</p>
+      <input type="hidden" name="username" value="admin" autocomplete="username">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+      <p id="error" class="stack-blocker" role="alert" hidden></p>
+      <div class="stack-actions"><button class="stack-button primary" type="submit">Sign in</button></div>
+    </form>
+  </main>
+  <script src="/static/login.js"></script>
+</body>
+</html>

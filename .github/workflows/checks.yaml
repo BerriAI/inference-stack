@@ -15,6 +15,8 @@ jobs:
           python-version: '3.12'
       - run: pip install -r launcher/requirements.txt
       - run: node --check launcher/static/app.js
+      - run: node --check launcher/static/login.js
+      - run: pip install cfn-lint==1.61.0 && cfn-lint aws/stack.yaml
       - run: |
           npm install --prefix "$RUNNER_TEMP/browser-tests" --no-package-lock playwright@1.62.1
           "$RUNNER_TEMP/browser-tests/node_modules/.bin/playwright" install --with-deps chromium

@@ -20,6 +20,7 @@ GRAFANA_PUBLIC_URL = os.environ.get("GRAFANA_PUBLIC_URL", "http://localhost:3000
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 HF_SECRET = os.environ.get("HF_SECRET", "")
 STATE_DIR = os.environ.get("STATE_DIR", "/state")
+MACHINE_INFO = os.environ.get("MACHINE_INFO", "")
 DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "inference-stack")
 VLLM_IMAGE = os.environ.get("VLLM_IMAGE", "vllm/vllm-openai:v0.31.0")
 SIMULATOR_IMAGE = os.environ.get("SIMULATOR_IMAGE", "ghcr.io/llm-d/llm-d-inference-sim:v1.2.0")

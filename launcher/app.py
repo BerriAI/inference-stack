@@ -1,6 +1,7 @@
 import base64
 import binascii
 import hashlib
+import hmac
 import json
 import math
 import re
@@ -14,7 +15,8 @@ from pathlib import Path
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -27,6 +29,21 @@ import settings
 operation_lock = threading.Lock()
 deployment = {"action": "", "name": "", "step": "", "error": "", "request": None}
 STATE_FILE = Path(settings.STATE_DIR) / "deployment.json"
+SESSION_COOKIE = "inference_stack_session"
+SESSION_SECONDS = 12 * 60 * 60
+
+
+def session_signature(value: str) -> str:
+    return hmac.new(settings.LAUNCHER_PASSWORD.encode(), value.encode(), hashlib.sha256).hexdigest()
+
+
+def valid_session(value: str) -> bool:
+    try:
+        expiry, nonce, signature = value.split(".")
+        remaining = int(expiry) - time.time()
+        return 0 < remaining <= SESSION_SECONDS and hmac.compare_digest(signature, session_signature(f"{expiry}.{nonce}"))
+    except (ValueError, TypeError):
+        return False
 
 
 class AddModel(BaseModel):
@@ -80,12 +97,19 @@ async def lifespan(app):
 app = FastAPI(title="Inference Stack Launcher", lifespan=lifespan)
 
 
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request, error):
+    # Validation responses must not echo submitted passwords or other inputs.
+    return JSONResponse({"detail": [{key: entry[key] for key in ("loc", "msg", "type")} for entry in error.errors()]}, status_code=422)
+
+
 @app.middleware("http")
 async def protect_admin(request: Request, call_next):
-    if request.url.path != "/healthz":
-        valid = False
+    public = request.url.path in ("/healthz", "/login", "/api/login") or request.url.path.startswith("/static/")
+    if not public:
+        valid = valid_session(request.cookies.get(SESSION_COOKIE, ""))
         authorization = request.headers.get("authorization", "")
-        if authorization.lower().startswith("basic ") and len(authorization) < 4096:
+        if not valid and authorization.lower().startswith("basic ") and len(authorization) < 4096:
             try:
                 username, password = base64.b64decode(authorization[6:], validate=True).decode("utf-8").split(":", 1)
                 valid_user = secrets.compare_digest(username.encode(), b"admin")
@@ -94,13 +118,43 @@ async def protect_admin(request: Request, call_next):
             except (ValueError, binascii.Error, UnicodeError):
                 pass
         if not valid:
+            if "text/html" in request.headers.get("accept", ""):
+                return RedirectResponse("/login", status_code=303)
+            headers = {} if request.headers.get("sec-fetch-site") else {"WWW-Authenticate": 'Basic realm="Inference Stack", charset="UTF-8"'}
             return JSONResponse({"detail": "Sign in as admin with this installation's launcher password."},
-                                status_code=401, headers={"WWW-Authenticate": 'Basic realm="Inference Stack", charset="UTF-8"'})
+                                status_code=401, headers=headers)
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         origin = request.headers.get("origin")
         if request.headers.get("sec-fetch-site") == "cross-site" or (origin and origin != str(request.base_url).rstrip("/")):
             return JSONResponse({"detail": "Use the launcher from its own address."}, status_code=403)
     return await call_next(request)
+
+
+@app.get("/login", include_in_schema=False)
+def login_page():
+    return FileResponse(Path(__file__).parent / "static/login.html")
+
+
+class Login(BaseModel):
+    password: str = Field(max_length=4096)
+
+
+@app.post("/api/login")
+def login(body: Login, request: Request):
+    if not secrets.compare_digest(body.password.encode(), settings.LAUNCHER_PASSWORD.encode()):
+        raise HTTPException(401, "Incorrect password. Use this installation's admin password.")
+    value = f"{int(time.time()) + SESSION_SECONDS}.{secrets.token_hex(16)}"
+    response = JSONResponse({"status": "ok"}, headers={"Cache-Control": "no-store"})
+    response.set_cookie(SESSION_COOKIE, f"{value}.{session_signature(value)}", max_age=SESSION_SECONDS,
+                        httponly=True, secure=request.url.scheme == "https", samesite="lax")
+    return response
+
+
+@app.post("/api/logout")
+def logout():
+    response = JSONResponse({"status": "ok"})
+    response.delete_cookie(SESSION_COOKIE)
+    return response
 
 
 def is_healthy(url: str) -> bool:
@@ -117,6 +171,17 @@ def inventory(bucket: int) -> dict:
 
 def gpu_inventory() -> dict:
     return inventory(int(time.monotonic() // 30))
+
+
+def machine_info() -> dict | None:
+    if not settings.MACHINE_INFO:
+        return None
+    try:
+        info = json.loads(Path(settings.MACHINE_INFO).read_text())
+        # Only display the non-secret installation metadata written by the host.
+        return {key: info.get(key) for key in ("provider", "instance_type", "region", "hourly_usd", "stop_at", "manage_url", "delete_url")}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {"provider": "aws"}
 
 
 def model_servers(registered: list[dict] | None = None) -> list[dict]:
@@ -156,7 +221,7 @@ def status() -> dict:
             row["name"] = match["name"]
         row["status"] = "ready" if match and row["ready"] == row["replicas"] and row["router_ready"] else "starting"
     components["router"] = {"healthy": all(r["router_ready"] for r in rows) if settings.MODE == "kubernetes" else is_healthy(settings.ROUTER_HEALTH_URL)}
-    return {"mode": settings.MODE, "hardware": gpu_inventory(), "permissions": permissions,
+    return {"mode": settings.MODE, "hardware": gpu_inventory(), "machine": machine_info(), "permissions": permissions,
             "models": rows, "deployment": dict(deployment), "components": components, "errors": errors}
 
 

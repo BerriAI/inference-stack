@@ -153,3 +153,7 @@ button:disabled { cursor:default; }
 @media(max-width:510px) { .stack-home { min-height:0; } .stack-main{min-height:0;} .stack-message{padding:0 18px;} }
 
 h1:focus { outline:none; }
+.stack-login { max-width:360px; margin:60px auto; }
+.stack-login label { display:block; font-size:13px; margin:28px 0 8px; }
+.stack-login input[type=password] { width:100%; border:1px solid var(--stack-line); border-radius:7px; padding:11px; background:var(--stack-bg); color:var(--stack-fg); }
+.stack-signout { margin-left:auto; }
