@@ -12,6 +12,7 @@ separately installed components retain their own licenses and trademarks.
   2023 Berri AI. The MIT terms in `LICENSE` apply to these copies with that notice.
 - Hugging Face, vLLM, llm-d, LiteLLM, and Grafana logos identify their respective
   projects. Their names and marks remain the property of their owners.
+- `assets/stack-flow.gif` is generated from the [Inference Stack landing-page animation](https://github.com/BerriAI/inference-stack-landing-page/tree/main/animation). Its Claude Code and Codex symbols identify example client applications; project marks retain their source branding.
 - Container images and Helm dependencies are distributed by their upstream
   projects under their respective licenses. In particular, the MIT license for
   this repository does not change Grafana's AGPL-3.0 license.

@@ -92,6 +92,20 @@ function allocationProblem(info, request) {
   if (info.max_context && request.context > info.max_context) return `This model supports up to ${info.max_context.toLocaleString()} context tokens.`;
   return '';
 }
+function allocationTitle(request) {
+  return `${request.simulate?'Simulated model':request.replicas * request.gpus_per_replica+' GPU'+(request.replicas*request.gpus_per_replica===1?'':'s')} · ${request.replicas} replica${request.replicas===1?'':'s'}`;
+}
+function updateAllocation() {
+  const title = app.querySelector('.stack-allocation strong');
+  const error = app.querySelector('[data-allocation-error]');
+  const deploy = app.querySelector('[data-action="deploy"]');
+  if (!title || !error || !deploy || !state.info) return;
+  title.textContent = allocationTitle(state.request);
+  const problem = allocationProblem(state.info,state.request);
+  error.textContent = problem;
+  error.hidden = !problem;
+  deploy.disabled = !!problem || busy;
+}
 function modelPage() {
   const id = route().id, existing = selectedModel(), pending = selectedDeployment();
   const ready = existing?.status === 'ready';
@@ -99,15 +113,15 @@ function modelPage() {
   if (!state.info && !existing && !pending) return `<div class="stack-content"><h1>${escape(id)}</h1>${state.modelError?`<p class="stack-blocker">${escape(state.modelError)}</p><div class="stack-actions">${button('Retry model check','refresh-model',true)}${textButton('Choose another model','catalogue')}</div>`:'<p role="status">Checking this model…</p>'}</div>`;
   const info = state.info || {id, estimated_gb:null};
   const request = existing || (progress ? pending.request : state.request);
-  const allocation = `<div class="stack-allocation"><div><strong>${request.simulate?'Simulated model':request.replicas * request.gpus_per_replica+' GPU'+(request.replicas*request.gpus_per_replica===1?'':'s')} · ${request.replicas} replica${request.replicas===1?'':'s'}</strong><p>${request.simulate?'No GPU required':escape(hardware())}</p></div>${info.estimated_gb && !request.simulate?`<span class="stack-small stack-muted">≈ ${info.estimated_gb} GB per replica</span>`:''}</div>`;
+  const allocation = `<div class="stack-allocation"><div><strong>${allocationTitle(request)}</strong><p>${request.simulate?'No GPU required':escape(hardware())}</p></div>${info.estimated_gb && !request.simulate?`<span class="stack-small stack-muted">≈ ${info.estimated_gb} GB per replica</span>`:''}</div>`;
   let content = '';
   if (progress) content = `${allocation}<p class="stack-note" role="status">${escape(progress)}…</p><p class="stack-note">You can leave this page while it starts.</p>`;
   else if (pending?.action==='remove' && pending.error) content = `${allocation}<p class="stack-blocker" role="alert">${escape(pending.error)}</p><div class="stack-actions">${button('Retry removal','retry-remove',true)}</div>`;
-  else if (ready) content = `${allocation}<div class="stack-actions">${external('litellm','Open LiteLLM',true)}${external('grafana','View in Grafana')}</div><p class="stack-note">${existing.simulate?'Simulation returns canned text. ':''}Available through LiteLLM. Routing is handled by llm-d.</p><div class="stack-actions">${textButton('Remove model','remove')}</div>`;
+  else if (ready) content = `${allocation}<div class="stack-actions">${external('litellm','Open LiteLLM',true)}${external('grafana','View in Grafana')}</div><p class="stack-note">${existing.simulate?'Simulation returns canned text. ':''}LiteLLM routes to this model; llm-d selects a replica.</p><div class="stack-actions">${textButton('Remove model','remove')}</div>`;
   else {
     const replacement = state.status.mode==='compose' && state.status.models.some(m=>m.served_model!==id);
     const blocker = allocationProblem(info,state.request);
-    content = `${allocation}${pending?.error?`<p class="stack-blocker" role="alert">${escape(pending.error)}</p>`:''}${existing && !pending?.error?'<p class="stack-note">Waiting for model readiness and registration in LiteLLM.</p>':''}<details class="stack-settings" ${state.settingsOpen?'open':''}><summary>Settings</summary><div class="stack-fields"><label>Replicas<input name="replicas" type="number" min="1" max="8" value="${state.request.replicas}" required></label><label>GPUs per replica<input name="gpus_per_replica" type="number" min="1" max="8" value="${state.request.gpus_per_replica}" required></label><label>Context length<input name="context" type="number" min="512" max="131072" value="${state.request.context}" required></label><label class="check"><input name="simulate" type="checkbox" ${state.request.simulate?'checked':''}> Simulate without a GPU (canned responses)</label></div></details>${blocker?`<p class="stack-blocker" role="alert">${escape(blocker)}</p>`:''}${info.note?`<p class="stack-note">${escape(info.note)} <a href="https://docs.vllm.ai/en/stable/models/supported_models/" target="_blank" rel="noopener noreferrer">vLLM compatibility ↗</a></p>`:''}${info.gated?`<p class="stack-note"><a href="https://huggingface.co/${escape(id)}" target="_blank" rel="noopener noreferrer">Model access on Hugging Face ↗</a></p>`:''}${replacement?'<p class="stack-note">Deploying this model replaces the running model. Requests pause while it starts.</p>':''}${!state.status.permissions.deploy?'<p class="stack-note">This launcher cannot deploy directly. Run the generated command from your repository checkout, then check readiness here.</p>':''}<div class="stack-actions">${button(state.status.permissions.deploy?(replacement?'Replace model':pending?.error?'Retry deployment':'Deploy'):'Get deployment command','deploy',true,!!blocker || busy || !state.info)}${textButton('Check again','refresh-model')}</div>${state.command?`<pre class="stack-code"><code>${escape(state.command)}</code></pre><div class="stack-actions">${button('Copy command','copy')}${textButton('Check deployment','refresh')}</div>`:''}`;
+    content = `${allocation}${pending?.error?`<p class="stack-blocker" role="alert">${escape(pending.error)}</p>`:''}${existing && !pending?.error?'<p class="stack-note">Waiting for model readiness and registration in LiteLLM.</p>':''}<details class="stack-settings" ${state.settingsOpen?'open':''}><summary>Settings</summary><div class="stack-fields"><label>Replicas<input name="replicas" type="number" min="1" max="8" value="${state.request.replicas}" required></label><label>GPUs per replica<input name="gpus_per_replica" type="number" min="1" max="8" value="${state.request.gpus_per_replica}" required></label><label>Context length<input name="context" type="number" min="512" max="131072" value="${state.request.context}" required></label><label class="check"><input name="simulate" type="checkbox" ${state.request.simulate?'checked':''}> Simulate without a GPU (canned responses)</label></div></details><p class="stack-blocker" data-allocation-error role="alert" ${blocker?'':'hidden'}>${escape(blocker)}</p>${info.note?`<p class="stack-note">${escape(info.note)} <a href="https://docs.vllm.ai/en/stable/models/supported_models/" target="_blank" rel="noopener noreferrer">vLLM compatibility ↗</a></p>`:''}${info.gated?`<p class="stack-note"><a href="https://huggingface.co/${escape(id)}" target="_blank" rel="noopener noreferrer">Model access on Hugging Face ↗</a></p>`:''}${replacement?'<p class="stack-note">Deploying this model replaces the running model. Requests pause while it starts.</p>':''}${!state.status.permissions.deploy?'<p class="stack-note">This launcher cannot deploy directly. Run the generated command from your repository checkout, then check readiness here.</p>':''}<div class="stack-actions">${button(state.status.permissions.deploy?(replacement?'Replace model':pending?.error?'Retry deployment':'Deploy'):'Get deployment command','deploy',true,!!blocker || busy || !state.info)}${textButton('Check again','refresh-model')}</div>${state.command?`<pre class="stack-code"><code>${escape(state.command)}</code></pre><div class="stack-actions">${button('Copy command','copy')}${textButton('Check deployment','refresh')}</div>`:''}`;
   }
   if(existing && !ready && !progress && pending?.action!=='remove') content+=`<div class="stack-actions">${textButton('Remove model','remove')}</div>`;
   if(ready && state.command) content+=`<pre class="stack-code"><code>${escape(state.command)}</code></pre><div class="stack-actions">${button('Copy command','copy')}</div>`;
@@ -189,12 +203,11 @@ async function navigate() {
 }
 app.addEventListener('input', e => {
   if(e.target.matches('.stack-search')) {state.query=e.target.value;clearTimeout(searchTimer);searchTimer=setTimeout(()=>search(),250);}
-  if(['replicas','gpus_per_replica','context'].includes(e.target.name)) state.request[e.target.name]=Number(e.target.value);
+  if(['replicas','gpus_per_replica','context'].includes(e.target.name)) {state.request[e.target.name]=Number(e.target.value);updateAllocation();}
   if(['prefix_cache','queue'].includes(e.target.name) && state.routing) state.routing[e.target.name]=Number(e.target.value);
 });
 app.addEventListener('change', e => {
   if(e.target.name==='simulate') {state.request.simulate=e.target.checked;state.settingsOpen=true;render();}
-  if(['replicas','gpus_per_replica','context'].includes(e.target.name)) {state.settingsOpen=true;render();}
   if(e.target.name==='routing_model') loadRouting(e.target.value);
 });
 app.addEventListener('click', async e => {
