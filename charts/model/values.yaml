@@ -3,6 +3,8 @@ model: ""
 replicas: 1
 gpusPerReplica: 1
 maxModelLen: 4096
+nodeSelector: {}
+minGpuMemoryMiB: 0
 # Run the llm-d vLLM simulator instead of vLLM. Needs no GPU and returns canned text.
 simulate: false
 

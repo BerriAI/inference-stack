@@ -3,6 +3,7 @@ const message = document.querySelector('#message');
 const forwardArrow = '<svg class="stack-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const state = {status:null, info:null, query:'', results:[], cursor:'', searching:false, searchError:'',
+  gpuOptions:null, gpuError:'', gpuLoading:false, selectedGpu:'',
   modelError:'', diagnostics:null, panel:'', editing:false, request:{replicas:1, gpus_per_replica:1, context:4096, simulate:false}, settingsOpen:false, command:'', routing:null, routingOpen:false};
 let searchTimer, searchController, detailController, busy = false, lastStatus = '';
 
@@ -53,10 +54,39 @@ function gpuDeadline(c) {
   const stop = c?.stop_at ? new Date(c.stop_at) : null;
   return stop && Number.isFinite(stop.getTime()) ? `GPUs are removed at ${escape(stop.toLocaleString())}. Running models stop then.` : `GPUs are removed automatically after ${escape(c?.hours || 4)} hours.`;
 }
+function selectedGpu() { return state.gpuOptions?.find(row=>row.instance_type===state.selectedGpu); }
+function gpuPrice(gpu) { return Number.isFinite(gpu?.hourly_usd) ? '$'+gpu.hourly_usd.toFixed(3)+'/hour' : 'Price unavailable'; }
+function gpuSpec(gpu) { return `${gpu.gpu_count || '?'} × ${gpu.name}${gpu.memory_gb?' · '+gpu.memory_gb+' GiB per GPU':''}`; }
+function gpuPicker() {
+  if(state.gpuLoading) return '<p class="stack-note" role="status">Checking GPUs and prices in AWS…</p>';
+  if(state.gpuError) return `<p class="stack-blocker" role="alert">${escape(state.gpuError)}</p>${textButton('Retry GPU check','gpu-options')}`;
+  if(!state.gpuOptions?.length) return '<p class="stack-note">No supported NVIDIA GPUs are offered in this installation’s availability zone.</p>'+textButton('Check again','gpu-options');
+  const gpu=selectedGpu();
+  return `<div class="stack-fields stack-gpu-picker"><label>AWS GPU<select name="gpu_type" aria-label="AWS GPU">${state.gpuOptions.map(row=>`<option value="${escape(row.instance_type)}" ${row.instance_type===state.selectedGpu?'selected':''}>${escape(gpuSpec(row))} · ${escape(row.instance_type)} · ${gpuPrice(row)}${row.blocker?' · Check availability':''}</option>`).join('')}</select></label></div>${gpu?`<p class="stack-note">${gpu.vcpus} vCPUs · ${gpu.host_memory_gb} GiB system memory · ${escape(state.status.capacity.region)}. Price is per machine.</p>${gpu.blocker?`<p class="stack-blocker" role="alert">${escape(gpu.blocker)}</p>${awsLink(gpu.quota_url,'AWS quotas')}`:''}`:''}`;
+}
+async function loadGpuOptions() {
+  if(!state.status.capacity || state.gpuLoading) return;
+  state.gpuLoading=true;state.gpuError='';render();
+  try {
+    state.gpuOptions=(await api('/api/gpus/options')).options;
+    const fits=row=>!state.info?.estimated_gb || row.memory_gb*row.gpu_count>=state.info.estimated_gb;
+    if(!state.gpuOptions.some(row=>row.instance_type===state.selectedGpu)) {
+      state.selectedGpu=(state.gpuOptions.find(row=>!row.blocker && fits(row)) || state.gpuOptions.find(fits) || state.gpuOptions[0])?.instance_type || '';
+      suggestGpuAllocation();
+    }
+  } catch(error) {state.gpuError=error.message;state.gpuOptions=null;}
+  finally {state.gpuLoading=false;render();}
+}
+function suggestGpuAllocation() {
+  const gpu=selectedGpu();
+  if(route().page==='model' && gpu && state.info?.estimated_gb && !state.settingsOpen) {
+    state.request.gpus_per_replica=Math.min(8,2**Math.ceil(Math.log2(Math.max(1,state.info.estimated_gb/gpu.memory_gb))));
+  }
+}
 function addGpuPage() {
-  const c = state.status.capacity;
-  if (!c || c.desired == null) return `<div class="stack-content"><h1 tabindex="-1">Add GPU</h1><p class="stack-blocker">${escape(c?.error || 'GPU provisioning is available on AWS installations.')}</p>${button('Check again','refresh')}</div>`;
-  return `<div class="stack-content stack-narrow"><div class="stack-back">${textButton('← GPUs','gpus')}</div><h1 tabindex="-1">Add GPU</h1><div class="stack-allocation"><div><strong>${escape(c.name)} · ${escape(c.memory_gb)} GB</strong><p>${escape(c.instance_type)} · AWS Ohio</p></div><strong>$${c.hourly_usd.toFixed(3)}/hour</strong></div><p class="stack-note">AWS bills your account for the machine, a 200 GB disk, IPv4 and network usage. No model is installed automatically.</p><p class="stack-note">${c.desired?gpuDeadline(c):`Removed automatically after ${c.hours} hours, including its disk. Running models stop then.`}</p>${c.error?`<p class="stack-blocker">${escape(c.error)}</p>`:''}${c.desired>=c.limit?'<p class="stack-blocker">This installation has reached its GPU limit. Remove a GPU to add another.</p>':''}<div class="stack-actions">${button('Add GPU · $'+c.hourly_usd.toFixed(3)+'/hour','rent-gpu',true,busy || c.desired>=c.limit)}${textButton('Cancel','gpus')}</div></div>`;
+  const c=state.status.capacity,gpu=selectedGpu();
+  if(!c || c.desired==null) return `<div class="stack-content"><h1 tabindex="-1">Add GPU</h1><p class="stack-blocker">${escape(c?.error || 'GPU provisioning is available on AWS installations.')}</p>${button('Check again','refresh')}</div>`;
+  return `<div class="stack-content stack-narrow"><div class="stack-back">${textButton('← GPUs','gpus')}</div><h1 tabindex="-1">Add GPU</h1>${gpuPicker()}<p class="stack-note">AWS bills your account for the machine, a 200 GB disk, IPv4 and network usage. AWS confirms spare capacity when it launches. No model is installed automatically.</p><p class="stack-note">${c.desired?gpuDeadline(c):`Removed automatically after ${c.hours} hours, including its disk. Running models stop then.`}</p>${c.desired>=c.limit?'<p class="stack-blocker">This installation has reached its machine limit. Remove a GPU to add another.</p>':''}<div class="stack-actions">${button(gpu?'Add GPU · '+gpuPrice(gpu):'Add GPU','rent-gpu',true,busy || state.gpuLoading || !!state.gpuError || !gpu || !!gpu?.blocker || c.desired>=c.limit)}${textButton('Cancel','gpus')}</div></div>`;
 }
 function machinePage() {
   const h = state.status.hardware, m = state.status.machine, c = state.status.capacity;
@@ -64,7 +94,7 @@ function machinePage() {
   if (c) {
     const machines = c.machines || [];
     const pending = Math.max(0,(c.desired || 0)-machines.filter(g=>g.state!=='removing').length);
-    content = `${c.error?`<p class="stack-blocker">${escape(c.error)}</p>`:''}${machines.length?`<table class="stack-table"><thead><tr><th>GPU</th><th>State</th><th></th></tr></thead><tbody>${machines.map((g,i)=>`<tr><td>${escape(c.name)} · ${escape(c.memory_gb)} GB<small>GPU ${i+1} · $${c.hourly_usd.toFixed(3)}/hour</small></td><td>${g.state==='ready'?(g.models?.length?'In use':'Available'):g.state==='removing'?'Removing…':'Starting…'}${g.models?.length?'<small>'+g.models.map(name=>escape(state.status.models.find(m=>m.name===name)?.served_model.split('/').at(-1) || name)).join(', ')+'</small>':''}</td><td>${g.state==='removing'?'':`<button class="stack-text-button" data-remove-gpu="${escape(g.id)}" ${busy?'disabled':''}>Remove</button>`}</td></tr>`).join('')}</tbody></table>`:!pending?'<p class="stack-note">No GPUs added yet.</p>':''}${pending?`<p class="stack-note" role="status">Starting ${pending} GPU${pending===1?'':'s'}… You can leave this page while AWS prepares the machine.</p>`:''}${c.desired?`<p class="stack-note">${gpuDeadline(c)}</p>`:''}${pending && !machines.length?`<div class="stack-actions">${textButton('Cancel pending GPUs','cancel-gpus')}</div>`:''}<p class="stack-note">Removing a GPU ends its compute and disk charges once AWS finishes termination. Remove its models first.</p>${h.count>0?`<div class="stack-actions">${button('Deploy a model','catalogue',true)}</div>`:''}`;
+    content = `${c.error?`<p class="stack-blocker">${escape(c.error)}</p>`:''}${machines.length?`<table class="stack-table"><thead><tr><th>GPU</th><th>State</th><th></th></tr></thead><tbody>${machines.map((g,i)=>`<tr><td>${escape(gpuSpec(g))}<small>${escape(g.instance_type)} · ${gpuPrice(g)}</small></td><td>${g.state==='ready'?(g.models?.length?'In use':'Available'):g.state==='removing'?'Removing…':'Starting…'}${g.models?.length?'<small>'+g.models.map(name=>escape(state.status.models.find(m=>m.name===name)?.served_model.split('/').at(-1) || name)).join(', ')+'</small>':''}</td><td>${g.state==='removing'?'':`<button class="stack-text-button" data-remove-gpu="${escape(g.id)}" ${busy?'disabled':''}>Remove</button>`}</td></tr>`).join('')}</tbody></table>`:!pending?'<p class="stack-note">No GPUs added yet.</p>':''}${pending?`<p class="stack-note" role="status">Starting ${pending} GPU${pending===1?'':'s'}… You can leave this page while AWS prepares the machine.</p>`:''}${c.desired?`<p class="stack-note">${gpuDeadline(c)}</p>`:''}${pending && !machines.length?`<div class="stack-actions">${textButton('Cancel pending GPUs','cancel-gpus')}</div>`:''}<p class="stack-note">Removing a GPU ends its compute and disk charges once AWS finishes termination. Remove its models first.</p>${h.count>0?`<div class="stack-actions">${button('Deploy a model','catalogue',true)}</div>`:''}`;
   } else {
     content = `${h.error?`<p class="stack-blocker">${escape(h.error)}</p>`:''}${h.devices.length?`<table class="stack-table"><thead><tr><th>GPU</th><th>Memory</th><th>${state.status.mode==='compose'?'Memory used':'Available GPUs'}</th></tr></thead><tbody>${h.devices.map(d=>`<tr><td>${escape(d.name)}${d.count>1?` × ${d.count}`:''}</td><td>${d.memory_gb?escape(d.memory_gb)+' GB':'Unknown'}</td><td>${state.status.mode==='compose'?(d.used_gb==null?'Unknown':escape(d.used_gb)+' GB'):escape(d.available)+' / '+escape(d.count)}</td></tr>`).join('')}</tbody></table>`:''}<p class="stack-note">${state.status.mode==='compose'?'GPUs on this Docker host. Memory used includes other applications. Detected GPUs may already be busy.':'GPUs on ready, schedulable cluster nodes. Availability excludes resources allocated to pods.'}</p>`;
   }
@@ -73,7 +103,7 @@ function machinePage() {
 function homeSummary() {
   const s = state.status, h = s.hardware, c = s.capacity;
   const available = h.count===null ? null : h.devices.reduce((sum,d)=>sum+(d.available ?? 0),0);
-  return `<div class="stack-summary"><div><a href="#models">${s.errors.length?'Deployments unavailable':s.models.length+' deployment'+(s.models.length===1?'':'s')}</a><span aria-hidden="true">·</span><a href="#gpus">${h.count===null?'GPUs unavailable':h.count+' GPU'+(h.count===1?'':'s')}</a>${s.mode==='kubernetes' && available!==null?`<span class="stack-muted">· ${available} available</span>`:''}${c?.desired>h.count?`<span class="stack-muted">· ${c.desired-h.count} starting</span>`:''}</div>${c?textButton('Add GPU →','add-gpu'):textButton('View GPUs →','gpus')}</div>${c?.error?`<p class="stack-blocker">${escape(c.error)}</p>`:''}`;
+  return `<div class="stack-summary"><div><a href="#models">${s.errors.length?'Deployments unavailable':s.models.length+' deployment'+(s.models.length===1?'':'s')}</a><span aria-hidden="true">·</span><a href="#gpus">${h.count===null?'GPUs unavailable':h.count+' GPU'+(h.count===1?'':'s')}</a>${s.mode==='kubernetes' && available!==null?`<span class="stack-muted">· ${available} available</span>`:''}${c?.pending?`<span class="stack-muted">· ${c.pending} machine${c.pending===1?'':'s'} starting</span>`:''}</div>${c?textButton('Add GPU →','add-gpu'):textButton('View GPUs →','gpus')}</div>${c?.error?`<p class="stack-blocker">${escape(c.error)}</p>`:''}`;
 }
 function selectedModel() { return state.status.models.find(m => m.served_model === route().id); }
 function selectedDeployment() { return state.status.deployment.request?.model === route().id ? state.status.deployment : null; }
@@ -103,7 +133,7 @@ function fit(model) {
   if (model.blocker) return ['Unsupported task','fit-no'];
   if (!model.estimated_gb) return ['','fit-no'];
   const devices = state.status.hardware.devices;
-  const memory = Math.max(state.status.capacity?.memory_gb || 0, ...devices.map(d=>(d.memory_gb || 0)*d.available));
+  const memory = Math.max(0, ...devices.map(d=>(d.memory_gb || 0)*d.available));
   if (memory && model.estimated_gb > memory) return ['Needs more memory','fit-warn'];
   return ['','stack-muted'];
 }
@@ -127,8 +157,8 @@ function modelList() {
 function needsGpu(request = state.request) {
   const s=state.status, c=s.capacity;
   if(!c || request.simulate || selectedModel()) return false;
-  const available=s.hardware.devices.reduce((sum,d)=>sum+d.available,0);
-  return request.replicas*request.gpus_per_replica>available;
+  const available=s.hardware.devices.reduce((sum,d)=>sum+((d.memory_gb || 0)*request.gpus_per_replica >= (state.info?.estimated_gb || 0)?Math.floor(d.available/request.gpus_per_replica):0),0);
+  return request.replicas>available;
 }
 function allocationProblem(info, request) {
   if (request.simulate) return '';
@@ -137,11 +167,15 @@ function allocationProblem(info, request) {
   if (needsGpu(request)) {
     const c=state.status.capacity;
     if(c.desired==null) return c.error || 'AWS capacity is unavailable. Check GPUs and retry.';
-    if(c.error) return c.error;
-    if(c.desired>=c.limit) return 'No GPU is available. Free capacity from an existing deployment or adjust the AWS GPU limit.';
-    if(request.gpus_per_replica!==1 || request.replicas!==1) return 'Add capacity from GPUs first for multiple replicas. Each AWS machine has one GPU.';
-    if(info.estimated_gb>c.memory_gb) return 'This model is estimated to need more memory than this AWS GPU. Choose a smaller model.';
-    if(c.desired>(state.status.hardware.count || 0)) return 'A GPU is already starting. Wait for it to become available, then deploy.';
+    if(c.desired>=c.limit) return 'No suitable GPU is available. Free an existing machine or remove one to add another.';
+    if(state.gpuLoading) return 'Checking GPUs in AWS…';
+    if(state.gpuError) return state.gpuError;
+    const gpu=selectedGpu();
+    if(!gpu) return 'Choose an AWS GPU.';
+    if(gpu.blocker) return gpu.blocker;
+    if(request.gpus_per_replica*request.replicas>gpu.gpu_count) return 'This allocation needs more GPUs than the selected machine. Choose another machine or add GPUs first.';
+    if(info.estimated_gb>gpu.memory_gb*request.gpus_per_replica) return 'This model needs more GPU memory. Choose another machine or more GPUs per replica.';
+    if(c.pending) return 'A GPU machine is already starting. Wait for it to become available, then deploy.';
   } else if (h.count === 0) return state.status.mode==='compose' ? 'No GPU is available to Docker. Check the NVIDIA driver and Container Toolkit.' : 'No GPU is available. Add GPU capacity to this cluster.';
   if (h.count === null && state.status.mode==='compose') return h.error;
   if (!needsGpu(request) && h.count !== null && request.replicas*request.gpus_per_replica > h.count) return 'This allocation needs more GPUs than this installation has.';
@@ -173,9 +207,7 @@ function deployLabel() {
 }
 function rentalDetails() {
   if(!needsGpu()) return '';
-  const c=state.status.capacity;
-  if(!c?.hourly_usd) return '';
-  return `<div class="stack-rental"><strong>${escape(c.name)} · ${escape(c.memory_gb)} GB</strong><span>$${c.hourly_usd.toFixed(3)}/hour</span><p>${escape(c.instance_type)} · AWS Ohio. Disk, IPv4 and network are additional.</p><p>${gpuDeadline(c)}</p></div>`;
+  return `<div class="stack-rental">${gpuPicker()}<p>Disk, IPv4 and network are additional. AWS confirms spare capacity at launch.</p><p>${gpuDeadline(state.status.capacity)}</p></div>`;
 }
 function deploymentTools() {
   const d=state.diagnostics;
@@ -240,6 +272,7 @@ async function loadModel() {
   state.info=null; state.modelError=''; state.command=''; state.settingsOpen=false; state.panel=''; state.diagnostics=null; state.editing=false;
   let draft; try { draft=JSON.parse(sessionStorage.getItem('deploymentDraft')); } catch {}
   const saved=selectedDeployment()?.request || selectedModel() || (draft?.model===id?draft:null);
+  state.selectedGpu=saved?.instance_type || '';
   state.request={replicas:saved?.replicas||1,gpus_per_replica:saved?.gpus_per_replica||1,context:saved?.context||4096,simulate:saved?.simulate||false};
   render(true);
   try {
@@ -248,6 +281,7 @@ async function loadModel() {
     if(saved && !selectedModel() && !selectedDeployment()?.step && !state.status.permissions.deploy) {
       const result=await api('/api/models',{method:'POST',body:JSON.stringify({...state.request,model:id})});state.command=result.command || '';
     }
+    if(needsGpu()) await loadGpuOptions();
     render();
   } catch(e) { if(e.name!=='AbortError'){state.modelError=e.message;say(e.message); render();} }
 }
@@ -274,7 +308,7 @@ async function navigate() {
   if (!state.status) return;
   const page=route().page;
   if(page==='model') await loadModel();
-  else {render(true); if(page==='catalogue')search(); if(page==='routing'){state.routing=null;loadRouting();}}
+  else {render(true); if(page==='catalogue')search(); if(page==='add-gpu')loadGpuOptions(); if(page==='routing'){state.routing=null;loadRouting();}}
 }
 app.addEventListener('input', e => {
   if(e.target.matches('.stack-search')) {state.query=e.target.value;clearTimeout(searchTimer);searchTimer=setTimeout(()=>search(),250);}
@@ -282,7 +316,8 @@ app.addEventListener('input', e => {
   if(['prefix_cache','queue'].includes(e.target.name) && state.routing) state.routing[e.target.name]=Number(e.target.value);
 });
 app.addEventListener('change', e => {
-  if(e.target.name==='simulate') {state.request.simulate=e.target.checked;state.settingsOpen=true;render();}
+  if(e.target.name==='gpu_type') {state.selectedGpu=e.target.value;suggestGpuAllocation();render();}
+  if(e.target.name==='simulate') {state.request.simulate=e.target.checked;state.settingsOpen=true;render();if(needsGpu() && !state.gpuOptions)loadGpuOptions();}
   if(e.target.name==='routing_model') loadRouting(e.target.value);
 });
 app.addEventListener('click', async e => {
@@ -292,6 +327,7 @@ app.addEventListener('click', async e => {
   if(['home','catalogue','models','routing','gpus','add-gpu'].includes(action)){go(action);return;}
   if(action==='vllm'){go(state.status.models.length || state.status.deployment.request?'models':'catalogue');return;}
   if(action==='search'||action==='more'){search(action==='more');return;}
+  if(action==='gpu-options'){await loadGpuOptions();return;}
   if(action==='refresh'){await refresh();return;}
   if(action==='refresh-model'){await refresh();await loadModel();return;}
   if(action==='edit-deployment' || action==='cancel-edit'){state.editing=action==='edit-deployment';state.settingsOpen=state.editing;render();return;}
@@ -317,14 +353,14 @@ app.addEventListener('click', async e => {
     } else if(action==='rent-gpu' || action==='cancel-gpus') {
       const expected=state.status.capacity.desired;
       if(action==='cancel-gpus' && !confirm('Cancel the pending GPU machines?')) return;
-      await api('/api/gpus',{method:'POST',body:JSON.stringify({expected,desired:action==='rent-gpu'?expected+1:0})});
+      await api('/api/gpus',{method:'POST',body:JSON.stringify({expected,desired:action==='rent-gpu'?expected+1:0,instance_type:selectedGpu()?.instance_type || '',hourly_usd:selectedGpu()?.hourly_usd || null})});
       await refresh();go('gpus');
     } else if(action==='remove-gpu') {
       if(!confirm('Remove this GPU and its disk? Its models must be removed first.')) return;
       await api('/api/gpus/'+encodeURIComponent(gpu.dataset.removeGpu),{method:'DELETE'});
       await refresh();
     } else if(action==='deploy') {
-      const body={...state.request,model:route().id,replace_existing:true,add_gpu:needsGpu(),expected_capacity:needsGpu()?state.status.capacity.desired:null};
+      const body={...state.request,model:route().id,replace_existing:true,add_gpu:needsGpu(),expected_capacity:needsGpu()?state.status.capacity.desired:null,instance_type:needsGpu()?selectedGpu()?.instance_type:'',hourly_usd:needsGpu()?selectedGpu()?.hourly_usd:null};
       const result=await api('/api/models',{method:'POST',body:JSON.stringify(body)});
       state.editing=false; state.command=result.command || ''; sessionStorage.setItem('deploymentDraft',JSON.stringify(body)); await refresh();
     } else if(action==='remove' || action==='retry-remove') {
@@ -337,7 +373,7 @@ app.addEventListener('click', async e => {
     } else if(action==='save-routing') {
       await api('/api/routing',{method:'PUT',body:JSON.stringify(state.routing)});await refresh();
     }
-  } catch(e) {say(e.message);}
+  } catch(e) {say(e.message);if(action==='rent-gpu' || action==='deploy' && needsGpu()) await loadGpuOptions();}
   finally {busy=false;render();}
 });
 window.addEventListener('hashchange',navigate);

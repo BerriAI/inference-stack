@@ -227,7 +227,10 @@ def configure_stack(public_url, password):
 def configure_capacity(stack):
     region = os.environ['AWS_DEFAULT_REGION']
     config = {key: os.environ[name] for key, name in (
-        ('group', 'GPU_GROUP'), ('schedule', 'GPU_SCHEDULE'), ('stop_role', 'GPU_STOP_ROLE'))}
+        ('schedule', 'GPU_SCHEDULE'), ('stop_role', 'GPU_STOP_ROLE'), ('stop_function', 'GPU_STOP_FUNCTION'),
+        ('template', 'GPU_TEMPLATE'), ('template_version', 'GPU_TEMPLATE_VERSION'), ('subnet', 'GPU_SUBNET'), ('zone', 'GPU_ZONE'))}
+    config['groups'] = os.environ['GPU_GROUPS'].split(',')
+    config['region'] = region
     config['hours'] = int(os.environ['STOP_AFTER_HOURS'])
     write('/etc/inference-stack/capacity.json', json.dumps(config))
     console = f'https://{region}.console.aws.amazon.com'
@@ -287,11 +290,14 @@ def wait_for_services(address, password):
 
 def install_worker():
     memory = int(run('nvidia-smi', '--query-gpu=memory.total', '--format=csv,noheader,nounits').strip().splitlines()[0])
+    product = run('nvidia-smi', '--query-gpu=name', '--format=csv,noheader').strip().splitlines()[0]
+    product = re.sub(r'[^A-Za-z0-9_.-]+', '-', product).strip('-')[:63]
     join = json.loads(aws('secretsmanager', 'get-secret-value', '--secret-id', os.environ['JOIN_SECRET'])['SecretString'])
     run('apt-get', 'update', '-qq')
     run('apt-get', 'install', '-y', 'conntrack', 'socat', 'iptables')
     install_k3s({'server': join['server'], 'token': join['token'], 'node-name': metadata('instance-id'),
-                 'node-label': ['inference-stack/role=gpu', 'nvidia.com/gpu.product=NVIDIA-A10G', f'nvidia.com/gpu.memory={memory}'],
+                 'node-label': ['inference-stack/role=gpu', f'nvidia.com/gpu.product={product}', f'nvidia.com/gpu.memory={memory}',
+                                f'node.kubernetes.io/instance-type={metadata("instance-type")}'],
                  'default-runtime': 'nvidia'}, worker=True)
 
 

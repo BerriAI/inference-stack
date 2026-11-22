@@ -57,6 +57,9 @@ class AddModel(BaseModel):
     replace_existing: bool = False
     add_gpu: bool = False
     expected_capacity: int | None = Field(default=None, ge=0, le=4)
+    instance_type: str = Field(default="", max_length=64, pattern=r"^[a-z0-9.\-]*$")
+    hourly_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    min_gpu_memory_mib: int = Field(default=0, ge=0)
 
     _valid_model = field_validator("model")(catalog.valid_id)
 
@@ -215,6 +218,13 @@ def capacity_status(bucket):
 class GPUCapacity(BaseModel):
     expected: int = Field(ge=0, le=4)
     desired: int = Field(ge=0, le=4)
+    instance_type: str = Field(default="", max_length=64, pattern=r"^[a-z0-9.\-]*$")
+    hourly_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+
+@app.get("/api/gpus/options")
+def gpu_options():
+    return capacity_request(path="/options")
 
 
 @app.post("/api/gpus")
@@ -231,7 +241,7 @@ def resize_gpus(body: GPUCapacity):
 
 @app.delete("/api/gpus/{instance}")
 def remove_gpu(instance: str):
-    if not re.fullmatch(r"i-[a-f0-9]{8,17}", instance):
+    if not re.fullmatch(r"(?:i-[a-f0-9]{8,17}|pending-[0-3])", instance):
         raise HTTPException(422, "Invalid GPU machine.")
     if not operation_lock.acquire(blocking=False):
         raise HTTPException(409, "Wait for the current deployment or GPU change to finish.")
@@ -308,14 +318,13 @@ def model_details(model: str) -> dict:
         raise HTTPException(502, "Could not reach Hugging Face. Retry the model check.")
     devices = gpu_inventory()["devices"]
     memory = max((d["memory_gb"] or 0 for d in devices), default=0)
-    if not memory and settings.AWS_CAPACITY_SOCKET:
-        memory = capacity_status(int(time.monotonic() // 10)).get("memory_gb", 0)
     info["suggested_gpus"] = min(8, max(1, math.ceil((info["estimated_gb"] or 0) / memory))) if memory else 1
     info["suggested_context"] = min(4096, info.get("max_context") or 4096)
     return info
 
 
 def validate_allocation(request: AddModel, adding_gpu: bool = False) -> None:
+    request.min_gpu_memory_mib = 0
     if request.simulate:
         return
     info = model_details(request.model)
@@ -324,14 +333,19 @@ def validate_allocation(request: AddModel, adding_gpu: bool = False) -> None:
     if info.get("max_context") and request.context > info["max_context"]:
         raise HTTPException(422, f"This model supports a context of up to {info['max_context']} tokens.")
     hardware = kubernetes.gpu_inventory(public_name(request.model)) if settings.MODE == "kubernetes" else gpu_inventory()
+    if settings.AWS_CAPACITY_SOCKET and info.get("estimated_gb"):
+        request.min_gpu_memory_mib = math.ceil(info["estimated_gb"] * 1024 / request.gpus_per_replica)
     if adding_gpu:
-        capacity = capacity_request()
-        if request.replicas != 1 or request.gpus_per_replica != 1:
-            raise HTTPException(422, "This AWS GPU has one device. Deploy one replica on it, or add capacity from GPUs first.")
-        if info.get("estimated_gb") and info["estimated_gb"] > capacity["memory_gb"]:
-            raise HTTPException(422, "This model is estimated to need more memory than the available AWS GPU. Choose a smaller model.")
-        if capacity.get("error"):
-            raise HTTPException(409, capacity["error"])
+        options = capacity_request(path="/options")["options"]
+        selected = next((row for row in options if row["instance_type"] == request.instance_type), None)
+        if not selected or request.hourly_usd != selected["hourly_usd"]:
+            raise HTTPException(422, "Choose an AWS GPU and review its current price.")
+        if selected["blocker"]:
+            raise HTTPException(409, selected["blocker"])
+        if request.replicas * request.gpus_per_replica > selected["gpu_count"]:
+            raise HTTPException(422, "This allocation needs more GPUs than the selected machine has. Choose another machine or add GPUs first.")
+        if info.get("estimated_gb") and info["estimated_gb"] > selected["memory_gb"] * request.gpus_per_replica:
+            raise HTTPException(422, "This model needs more GPU memory. Choose another machine, more GPUs per replica, or a smaller model.")
         return
     if hardware["count"] == 0:
         raise HTTPException(422, "No GPU is available. Add a GPU from the home page." if settings.AWS_CAPACITY_SOCKET else
@@ -342,6 +356,10 @@ def validate_allocation(request: AddModel, adding_gpu: bool = False) -> None:
             raise HTTPException(422, hardware["error"])
         return
     devices = hardware["devices"]
+    if settings.AWS_CAPACITY_SOCKET:
+        devices = [d for d in devices if (d.get("memory_gb") or 0) * 1024 >= request.min_gpu_memory_mib]
+        if request.add_gpu:
+            devices = [d for d in devices if d.get("instance_type") == request.instance_type]
     required = request.replicas * request.gpus_per_replica
     available = sum(d["available"] for d in devices)
     if required > available:
@@ -365,7 +383,8 @@ def deploy_model(request: AddModel, name: str) -> None:
                 if capacity.get("error"):
                     raise HTTPException(409, capacity["error"] + " Check GPUs to cancel pending capacity.")
                 hardware = kubernetes.gpu_inventory(name)
-                if any(d["available"] for d in hardware["devices"]):
+                if sum(d["available"] // request.gpus_per_replica for d in hardware["devices"]
+                       if d.get("instance_type") == request.instance_type) >= request.replicas:
                     break
                 cancel_deployment.wait(5)
             else:
@@ -421,7 +440,8 @@ def add_model(request: AddModel, background: BackgroundTasks) -> dict:
             if previous and previous["served_model"] != request.model and not request.replace_existing:
                 raise HTTPException(409, "This machine runs one model at a time. Confirm replacement to continue.")
         if request.add_gpu:
-            capacity_request("POST", body={"expected": request.expected_capacity, "desired": request.expected_capacity + 1})
+            capacity_request("POST", body={"expected": request.expected_capacity, "desired": request.expected_capacity + 1,
+                                           "instance_type": request.instance_type, "hourly_usd": request.hourly_usd})
             capacity_status.cache_clear()
         cancel_deployment.clear()
         set_deployment(action="deploy", name=name, step="Preparing deployment", error="", request=request.model_dump())

@@ -3,6 +3,8 @@ import datetime as dt
 import importlib.util
 from pathlib import Path
 import unittest
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "aws"))
 from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location('capacity', Path(__file__).resolve().parents[1] / 'aws/capacity.py')
@@ -12,10 +14,12 @@ spec.loader.exec_module(capacity)
 
 class CapacityTests(unittest.TestCase):
     def setUp(self):
-        self.config = {'group': 'test-only-group', 'schedule': 'test-only-schedule', 'stop_role': 'test-only-role', 'hours': 4}
-        self.current = {'DesiredCapacity': 0, 'MaxSize': 4, 'Instances': []}
-        self.group = patch.object(capacity, 'group', return_value=self.current).start()
+        self.config = {'groups': ['test-only-group', 'test-group-2'], 'schedule': 'test-only-schedule', 'stop_role': 'test-only-role', 'hours': 4, 'subnet': 'test-subnet', 'template': 'test-template', 'template_version': '1'}
+        self.current = {'AutoScalingGroupName': 'test-only-group', 'DesiredCapacity': 0, 'MaxSize': 1, 'Instances': []}
+        self.other = {'AutoScalingGroupName': 'test-group-2', 'DesiredCapacity': 0, 'MaxSize': 1, 'Instances': []}
+        self.group = patch.object(capacity, 'groups', return_value=[self.current, self.other]).start()
         self.aws = patch.object(capacity, 'aws', return_value={'Quota': {'Value': 32}}).start()
+        self.selection = patch.object(capacity, 'selected_gpu').start()
         self.nodes = patch.object(capacity, 'gpu_nodes', return_value=[]).start()
         self.clock = dt.datetime(2026, 11, 22, 12, tzinfo=dt.timezone.utc)
         patch.object(capacity, 'now', return_value=self.clock).start()
@@ -29,11 +33,11 @@ class CapacityTests(unittest.TestCase):
         run.assert_called_once_with('/usr/local/bin/k3s', 'kubectl', 'cordon', 'test-node', json_output=False)
 
     def test_quota_failure_creates_no_schedule_or_capacity(self):
-        self.aws.return_value = {'Quota': {'Value': 0}}
+        self.selection.side_effect = capacity.CapacityError('Quota is zero. No GPU was added.')
         with self.assertRaisesRegex(capacity.CapacityError, 'No GPU was added'):
             capacity.resize(self.config, 0, 1)
         self.schedule.assert_not_called()
-        self.assertEqual(self.aws.call_count, 1)
+        self.aws.assert_not_called()
 
     def test_schedule_is_created_before_billable_capacity(self):
         order = []
@@ -100,6 +104,43 @@ class CapacityTests(unittest.TestCase):
         self.nodes.return_value = [{'metadata': {'name': 'test-node'}}]
         with self.assertRaises(capacity.CapacityError): capacity.resize(self.config, 1, 0)
         self.aws.assert_not_called()
+
+    def test_new_type_updates_only_an_empty_group(self):
+        self.current.update(DesiredCapacity=1, Instances=[{'InstanceId':'test-existing'}])
+        self.deadline.return_value=self.clock+dt.timedelta(hours=1)
+        capacity.resize(self.config,1,2,'g6e.xlarge',1.86)
+        update=next(call for call in self.aws.call_args_list if call.args[1]=='update-auto-scaling-group')
+        self.assertEqual(update.kwargs['auto_scaling_group_name'],'test-group-2')
+        self.assertEqual(update.kwargs['mixed_instances_policy']['LaunchTemplate']['Overrides'],[{'InstanceType':'g6e.xlarge'}])
+        self.assertEqual(self.current['Instances'],[{'InstanceId':'test-existing'}])
+
+    def test_failed_type_update_never_launches_a_default_machine(self):
+        self.aws.side_effect=capacity.CapacityError('Could not set type')
+        with self.assertRaises(capacity.CapacityError):capacity.resize(self.config,0,1,'g6e.xlarge',1.86)
+        self.assertFalse(any(call.args[1]=='set-desired-capacity' for call in self.aws.call_args_list))
+
+    def test_cancelling_one_pending_machine_keeps_other_groups(self):
+        self.current['DesiredCapacity']=1
+        self.other['DesiredCapacity']=1
+        capacity.remove(self.config,'pending-1')
+        self.aws.assert_called_once_with('autoscaling','set-desired-capacity',auto_scaling_group_name='test-group-2',desired_capacity=0)
+
+    def test_pending_cancellation_cannot_remove_a_machine_that_has_started(self):
+        self.other.update(DesiredCapacity=1,Instances=[{'InstanceId':'test-new'}])
+        with self.assertRaisesRegex(capacity.CapacityError,'has started'):capacity.remove(self.config,'pending-1')
+        self.aws.assert_not_called()
+
+
+class SelectionTests(unittest.TestCase):
+    def test_unknown_type_stale_price_and_quota_are_rejected(self):
+        row={'instance_type':'g5.xlarge','hourly_usd':1.006,'blocker':''}
+        with patch.object(capacity.gpus,'options',return_value={'options':[row]}):
+            for name,price in [('p5.4xlarge',1.006),('g5.xlarge',1),('g5.xlarge',None)]:
+                with self.assertRaises(capacity.CapacityError):capacity.selected_gpu({},[],name,price)
+            self.assertEqual(capacity.selected_gpu({},[],'g5.xlarge',1.006),row)
+            row['blocker']='Quota exceeded'
+            with self.assertRaisesRegex(capacity.CapacityError,'No GPU was added'):
+                capacity.selected_gpu({},[],'g5.xlarge',1.006)
 
 
 if __name__ == '__main__':

@@ -67,6 +67,7 @@
 .stack-settings { margin-top:24px; }
 .stack-settings summary { font-size:12px; color:var(--stack-muted); width:max-content; }
 .stack-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; margin-top:20px; }
+.stack-gpu-picker { grid-template-columns:minmax(0,1fr); }
 .stack-fields label { display:flex; flex-direction:column; gap:7px; font-size:12px; }
 .stack-fields select,.stack-fields input { border:1px solid var(--stack-line); border-radius:6px; padding:9px; width:100%; color:var(--stack-fg); background:var(--stack-bg); }
 .stack-actions { display:flex; align-items:center; flex-wrap:wrap; gap:16px; margin-top:29px; }

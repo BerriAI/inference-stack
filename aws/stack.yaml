@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Inference Stack in Ohio. Starts with 0 models and 0 GPUs on a $0.0832/hour CPU machine. Add GPUs in the UI for $1.212/hour each. Disk, IPv4 and network cost extra. Delete the stack to stop all charges.
+Description: Inference Stack in Ohio. Starts with 0 models and 0 GPUs on a $0.0832/hour CPU machine. Choose GPUs and review their prices in the UI. Disk, IPv4 and network cost extra. Delete the stack to stop all charges.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -197,11 +197,58 @@ Resources:
                 Action: secretsmanager:PutSecretValue
                 Resource: !Ref AgentJoin
               - Effect: Allow
-                Action: [autoscaling:DescribeAutoScalingGroups, autoscaling:DescribeScalingActivities, servicequotas:GetServiceQuota]
+                Action: [autoscaling:DescribeAutoScalingGroups, autoscaling:DescribeScalingActivities, ec2:DescribeInstanceTypes, ec2:DescribeInstanceTypeOfferings, ec2:DescribeInstances, pricing:GetProducts, servicequotas:GetServiceQuota]
                 Resource: '*'
               - Effect: Allow
                 Action: [autoscaling:SetDesiredCapacity, autoscaling:TerminateInstanceInAutoScalingGroup]
-                Resource: !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup}
+                Resource:
+                  - !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup}
+                  - !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup2}
+                  - !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup3}
+                  - !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup4}
+              - Effect: Allow
+                Action: autoscaling:UpdateAutoScalingGroup
+                Resource:
+                  - !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup}
+                  - !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup2}
+                  - !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup3}
+                  - !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup4}
+                Condition:
+                  NumericEquals:
+                    autoscaling:MinSize: 0
+                    autoscaling:MaxSize: 1
+                  Bool:
+                    autoscaling:LaunchTemplateVersionSpecified: true
+                  ForAllValues:StringEquals:
+                    autoscaling:VPCZoneIdentifiers: [!Ref Subnet]
+                  ForAllValues:StringLike:
+                    autoscaling:InstanceTypes: ['g*', 'p*']
+              - Effect: Allow
+                Action: ec2:RunInstances
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${Subnet}
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${WorkerSecurityGroup}
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:launch-template/${WorkerTemplate}
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
+                Condition:
+                  ArnEquals:
+                    ec2:LaunchTemplate: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:launch-template/${WorkerTemplate}
+              - Effect: Allow
+                Action: ec2:RunInstances
+                Resource: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}::image/*
+                Condition:
+                  ArnEquals:
+                    ec2:LaunchTemplate: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:launch-template/${WorkerTemplate}
+                  Bool:
+                    ec2:IsLaunchTemplateResource: true
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt WorkerRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ec2.amazonaws.com
               - Effect: Allow
                 Action: [scheduler:GetSchedule, scheduler:UpdateSchedule]
                 Resource: !GetAtt StopSchedule.Arn
@@ -249,7 +296,12 @@ Resources:
             export STACK_ID='${AWS::StackId}'
             export PASSWORD_SECRET='${AdminPassword}'
             export JOIN_SECRET='${AgentJoin}'
-            export GPU_GROUP='${GpuGroup}'
+            export GPU_GROUPS='${GpuGroup},${GpuGroup2},${GpuGroup3},${GpuGroup4}'
+            export GPU_TEMPLATE='${WorkerTemplate}'
+            export GPU_TEMPLATE_VERSION='${WorkerTemplate.LatestVersionNumber}'
+            export GPU_SUBNET='${Subnet}'
+            export GPU_ZONE='${Prerequisites.Zone}'
+            export GPU_STOP_FUNCTION='${StopFunction.Arn}'
             export GPU_SCHEDULE='${StopSchedule}'
             export GPU_STOP_ROLE='${StopRole.Arn}'
             export STOP_AFTER_HOURS='${StopAfterHours}'
@@ -379,16 +431,85 @@ Resources:
     DependsOn: [InternetRoute, SubnetRoute]
     Properties:
       MinSize: '0'
-      MaxSize: '4'
+      MaxSize: '1'
       DesiredCapacity: '0'
       VPCZoneIdentifier: [!Ref Subnet]
-      LaunchTemplate:
-        LaunchTemplateId: !Ref WorkerTemplate
-        Version: !GetAtt WorkerTemplate.LatestVersionNumber
+      MixedInstancesPolicy:
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref WorkerTemplate
+            Version: !GetAtt WorkerTemplate.LatestVersionNumber
+          Overrides: [{InstanceType: g5.2xlarge}]
+        InstancesDistribution:
+          OnDemandPercentageAboveBaseCapacity: 100
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-gpu
           PropagateAtLaunch: true
+
+  GpuGroup2:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: [InternetRoute, SubnetRoute]
+    Properties:
+      MinSize: '0'
+      MaxSize: '1'
+      DesiredCapacity: '0'
+      VPCZoneIdentifier: [!Ref Subnet]
+      MixedInstancesPolicy:
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref WorkerTemplate
+            Version: !GetAtt WorkerTemplate.LatestVersionNumber
+          Overrides: [{InstanceType: g5.2xlarge}]
+        InstancesDistribution:
+          OnDemandPercentageAboveBaseCapacity: 100
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-gpu
+          PropagateAtLaunch: true
+
+  GpuGroup3:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: [InternetRoute, SubnetRoute]
+    Properties:
+      MinSize: '0'
+      MaxSize: '1'
+      DesiredCapacity: '0'
+      VPCZoneIdentifier: [!Ref Subnet]
+      MixedInstancesPolicy:
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref WorkerTemplate
+            Version: !GetAtt WorkerTemplate.LatestVersionNumber
+          Overrides: [{InstanceType: g5.2xlarge}]
+        InstancesDistribution:
+          OnDemandPercentageAboveBaseCapacity: 100
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-gpu
+          PropagateAtLaunch: true
+
+  GpuGroup4:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: [InternetRoute, SubnetRoute]
+    Properties:
+      MinSize: '0'
+      MaxSize: '1'
+      DesiredCapacity: '0'
+      VPCZoneIdentifier: [!Ref Subnet]
+      MixedInstancesPolicy:
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref WorkerTemplate
+            Version: !GetAtt WorkerTemplate.LatestVersionNumber
+          Overrides: [{InstanceType: g5.2xlarge}]
+        InstancesDistribution:
+          OnDemandPercentageAboveBaseCapacity: 100
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-gpu
+          PropagateAtLaunch: true
+
 
   VpcOrigin:
     Type: AWS::CloudFront::VpcOrigin
@@ -447,6 +568,53 @@ Resources:
         Count: 1
         Timeout: PT90M
 
+  StopFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RemoveTheseGPUs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: autoscaling:SetDesiredCapacity
+                Resource:
+                  - !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup}
+                  - !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup2}
+                  - !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup3}
+                  - !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup4}
+  StopFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 60
+      Role: !GetAtt StopFunctionRole.Arn
+      Environment:
+        Variables:
+          GPU_GROUPS: !Sub ${GpuGroup},${GpuGroup2},${GpuGroup3},${GpuGroup4}
+      Code:
+        ZipFile: |
+          import os
+          import boto3
+
+          def handler(event, context):
+              client = boto3.client('autoscaling')
+              failed = False
+              for group in os.environ['GPU_GROUPS'].split(','):
+                  try:
+                      client.set_desired_capacity(AutoScalingGroupName=group, DesiredCapacity=0, HonorCooldown=False)
+                  except Exception:
+                      failed = True
+              if failed:
+                  raise RuntimeError('Some GPU groups could not be stopped; retry all groups.')
   StopRole:
     Type: AWS::IAM::Role
     Properties:
@@ -461,13 +629,13 @@ Resources:
               StringEquals:
                 aws:SourceAccount: !Ref AWS::AccountId
       Policies:
-        - PolicyName: RemoveTheseGPUs
+        - PolicyName: StopTheseGPUs
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action: autoscaling:SetDesiredCapacity
-                Resource: !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup}
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt StopFunction.Arn
   StopSchedule:
     Type: AWS::Scheduler::Schedule
     Properties:
@@ -478,9 +646,9 @@ Resources:
       FlexibleTimeWindow:
         Mode: 'OFF'
       Target:
-        Arn: !Sub arn:${AWS::Partition}:scheduler:::aws-sdk:autoscaling:setDesiredCapacity
+        Arn: !GetAtt StopFunction.Arn
         RoleArn: !GetAtt StopRole.Arn
-        Input: !Sub '{"AutoScalingGroupName":"${GpuGroup}","DesiredCapacity":0,"HonorCooldown":false}'
+        Input: '{}'
         RetryPolicy:
           MaximumEventAgeInSeconds: 3600
           MaximumRetryAttempts: 3
