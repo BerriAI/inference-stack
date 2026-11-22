@@ -16,7 +16,7 @@
 
 </div>
 
-<img src="assets/launcher.png" alt="Inference Stack homepage: deployment and GPU totals, Deployments, LiteLLM, and Grafana. A fresh installation starts empty." width="100%">
+<img src="assets/stack-flow.gif" alt="Apps send requests to LiteLLM for model routing, then llm-d selects a vLLM replica. Hugging Face supplies model weights; Grafana shows metrics collected by Prometheus." width="100%">
 
 <a id="get-started"></a>
 
@@ -44,15 +44,20 @@ No GPU? Enable **Simulate without a GPU** in the model's **Settings** for canned
 
 ### AWS
 
-[Launch on AWS](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/create/review?templateURL=https%3A%2F%2Finference-stack-release-templates-templates-e0eqnr6ih8gk.s3.us-east-2.amazonaws.com%2Freleases%2Fv0.2.2%2Faws-stack.yaml&stackName=inference-stack) in your own account. Choose an admin password and create the stack. Once AWS shows **CREATE_COMPLETE**, open **Outputs → OpenInferenceStack**.
+Start with 0 models and 0 GPUs in your own account. Requires a paid AWS account with deployment permissions. Launcher compute is $0.0832/hour in Ohio; each GPU is $1.212/hour, plus disk, IPv4, and network.
 
-Start with no GPUs or models. Open **Deployments**, choose a model, review the GPU price, and choose **Add GPU and deploy**. Launcher compute is $0.0832/hour in Ohio; GPUs are $1.212/hour each, plus disk, IPv4 and network. New accounts may need a GPU quota increase. [Costs and cleanup](docs/setup.md#aws).
+1. [Launch on AWS](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/create/review?templateURL=https%3A%2F%2Finference-stack-release-templates-templates-e0eqnr6ih8gk.s3.us-east-2.amazonaws.com%2Freleases%2Fv0.2.2%2Faws-stack.yaml&stackName=inference-stack). Enter an **Admin password** of at least 20 characters, keep the other defaults, acknowledge IAM permissions, and choose **Create stack**.
+2. Wait for **CREATE_COMPLETE**, then open **Outputs → OpenInferenceStack**. Sign in as `admin` with that password.
+3. Open **Deployments**, choose a model, review the GPU price, and choose **Add GPU and deploy**.
+4. When **Ready**, choose **Try in LiteLLM**. Sign in with the same password, select the model in **Chat**, and send a message.
+
+GPUs are removed after four hours by default; the launcher stays billable until you delete the stack. New accounts may need a GPU quota increase. [Setup, quotas, and cleanup](docs/setup.md#aws).
 
 [Setup and prerequisites](docs/setup.md) · [Deploy with your agent](docs/setup.md#deploy-with-your-agent)
 
 ## The stack
 
-<img src="assets/stack-flow.gif" alt="Apps send requests to LiteLLM for model routing, then llm-d selects a vLLM replica. Hugging Face supplies model weights; Grafana shows metrics collected by Prometheus." width="100%">
+<img src="assets/launcher.png" alt="Inference Stack homepage: deployment and GPU totals, Deployments, LiteLLM, and Grafana. A fresh installation starts empty." width="100%">
 
 ### vLLM
 
