@@ -57,8 +57,6 @@ GPUs are removed after four hours by default; the launcher stays billable until 
 
 ## The stack
 
-<img src="assets/launcher.png" alt="Inference Stack homepage: deployment and GPU totals, Deployments, LiteLLM, and Grafana. A fresh installation starts empty." width="100%">
-
 ### vLLM
 
 Runs models from Hugging Face on your GPUs.
@@ -69,7 +67,7 @@ Runs models from Hugging Face on your GPUs.
 
 Manage models and send requests through one API or Chat.
 
-<img src="assets/litellm.png" alt="LiteLLM Model Hub showing example models served through vLLM" width="100%">
+<img src="assets/litellm-model-hub.png" alt="LiteLLM Model Hub showing example models served through vLLM" width="100%">
 
 ### llm-d
 
