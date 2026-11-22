@@ -9,7 +9,7 @@ Run on AWS, one machine with Docker Compose, or an existing Kubernetes cluster. 
 Use this path for one machine. You need Docker with Compose, curl, and OpenSSL. Real models also need an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). You can try the flow without a GPU using simulation.
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.3.0/install.sh | bash -s -- docker
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.3.1/install.sh | bash -s -- docker
 ```
 
 The installer verifies the release bundle, extracts it into `./inference-stack`, generates a private `compose/.env`, and starts the prebuilt stack. To choose another directory, export `INFERENCE_STACK_DIR` before running it. An existing installation and its credentials are reused.
@@ -25,7 +25,7 @@ All published ports bind to `127.0.0.1`. The launcher controls Docker, so keep l
 Use this path for a cluster. You need Helm 3.14 or later, `kubectl`, curl, OpenSSL, and permission to install the stack's resources. Confirm that `kubectl config current-context` selects the intended cluster. Real models need GPU nodes with the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html). Simulation does not require GPUs.
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.3.0/install.sh | bash -s -- kubernetes
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.3.1/install.sh | bash -s -- kubernetes
 ```
 
 The installer verifies and extracts the release into `./inference-stack`, installs the stack in namespace `inference` with generated credentials, waits for readiness, and forwards the launcher, LiteLLM, and Grafana to localhost. Leave the terminal open; Ctrl-C closes these connections while the stack keeps running. Running the command again reconnects to an existing healthy release without changing its values.
@@ -44,7 +44,7 @@ The template in `aws/stack.yaml` starts with **0 models and 0 GPUs**. It creates
 
 To start:
 
-1. Open [Launch on AWS](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/create/review?templateURL=https%3A%2F%2Finference-stack-release-templates-templates-e0eqnr6ih8gk.s3.us-east-2.amazonaws.com%2Freleases%2Fv0.3.0%2Faws-stack.yaml&stackName=inference-stack). Sign into the AWS account that will own and pay for the installation.
+1. Open [Launch on AWS](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/create/review?templateURL=https%3A%2F%2Finference-stack-release-templates-templates-e0eqnr6ih8gk.s3.us-east-2.amazonaws.com%2Freleases%2Fv0.3.1%2Faws-stack.yaml&stackName=inference-stack). Sign into the AWS account that will own and pay for the installation.
 2. Enter an **Admin password** of at least 20 characters. Keep the other defaults, review the cost, acknowledge the IAM permissions, and choose **Create stack**.
 3. Wait for `CREATE_COMPLETE`, then open **Outputs → OpenInferenceStack**. Sign in as `admin` with that password. The homepage shows **0 deployments · 0 GPUs**.
 4. Open **Deployments**, choose a model, and review its GPU allocation. If capacity is needed, select an **AWS GPU**, review its memory and hourly price, and choose **Add GPU and deploy**. You can also add GPUs separately from **GPUs**.
@@ -186,26 +186,19 @@ Database persistent volumes may remain; manage them separately according to your
 
 ## Update
 
-Keep your existing credentials and volumes when updating to v0.3.0. Use the instructions for your installation method.
+Keep your existing credentials and volumes when updating to v0.3.1. Use the instructions for your installation method.
 
-For Docker, change this line in `inference-stack/compose/.env`:
-
-```dotenv
-INFERENCE_STACK_LAUNCHER_IMAGE=ghcr.io/berriai/inference-stack/launcher:0.3.0
-```
-
-Then update the launcher:
+For Docker, rerun the installer from the directory containing `inference-stack`. It keeps `.env`, volumes and routing settings, recreates changed services, and keeps the previous recipe as a backup:
 
 ```bash
-cd inference-stack/compose
-docker compose up -d --no-build --pull always launcher
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.3.1/install.sh | bash -s -- docker
 ```
 
 For an existing Kubernetes cluster, update the chart while retaining your values:
 
 ```bash
-helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.3.0/inference-stack-0.3.0.tgz \
-  --namespace inference --reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.3.0 --wait
+helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.3.1/inference-stack-0.3.1.tgz \
+  --namespace inference --reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.3.1 --wait
 ```
 
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
@@ -220,8 +213,8 @@ Copy the prompt for your environment:
 <summary>Docker Compose</summary>
 
 ```text
-Set up Inference Stack v0.3.0 on this machine with Docker Compose.
-Read https://github.com/BerriAI/inference-stack/blob/v0.3.0/docs/setup.md
+Set up Inference Stack v0.3.1 on this machine with Docker Compose.
+Read https://github.com/BerriAI/inference-stack/blob/v0.3.1/docs/setup.md
 and inspect its release installer before running it. Check prerequisites,
 preserve any existing installation and credentials, and keep secrets out
 of chat and logs. Start the stack, verify its health, and open the launcher.
@@ -235,8 +228,8 @@ If no GPU is available, offer simulation and identify its canned response.
 <summary>Kubernetes</summary>
 
 ```text
-Set up Inference Stack v0.3.0 in Kubernetes.
-Read https://github.com/BerriAI/inference-stack/blob/v0.3.0/docs/setup.md
+Set up Inference Stack v0.3.1 in Kubernetes.
+Read https://github.com/BerriAI/inference-stack/blob/v0.3.1/docs/setup.md
 and inspect its release installer before running it. Confirm the current
 cluster is the intended target, check permissions and GPU capacity, and
 preserve existing releases and credentials. Keep secrets out of chat and
@@ -251,8 +244,8 @@ Use simulation only if I choose it. Ask before provisioning paid resources.
 <summary>AWS</summary>
 
 ```text
-Set up Inference Stack v0.3.0 in my AWS account.
-Read https://github.com/BerriAI/inference-stack/blob/v0.3.0/docs/setup.md#aws
+Set up Inference Stack v0.3.1 in my AWS account.
+Read https://github.com/BerriAI/inference-stack/blob/v0.3.1/docs/setup.md#aws
 and inspect the release template. Confirm the account, permissions, and
 cost before creating the stack. Keep credentials out of chat and logs.
 Open the empty launcher, help me choose a GPU and model, and ask before
