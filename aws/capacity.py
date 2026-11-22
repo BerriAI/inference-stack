@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manage this stack's GPU group. Only the launcher can reach this Unix socket."""
+"""Manage this stack's GPU machines. Only the launcher can reach this Unix socket."""
 
 import datetime as dt
 from http.server import BaseHTTPRequestHandler
@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import socketserver
 import subprocess
+
+import gpus
 
 CONFIG = Path('/etc/inference-stack/capacity.json')
 SOCKET = '/run/inference-stack/capacity.sock'
@@ -43,11 +45,23 @@ def now():
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
 
 
-def group(config):
-    groups = aws('autoscaling', 'describe-auto-scaling-groups', auto_scaling_group_names=[config['group']])['AutoScalingGroups']
-    if len(groups) != 1:
-        raise CapacityError('The GPU group is missing. Check this installation in AWS.')
-    return groups[0]
+def groups(config):
+    rows = aws('autoscaling', 'describe-auto-scaling-groups', auto_scaling_group_names=config['groups'])['AutoScalingGroups']
+    if {row['AutoScalingGroupName'] for row in rows} != set(config['groups']):
+        raise CapacityError('A GPU group is missing. Check this installation in AWS.')
+    return rows
+
+
+def selected_gpu(config, current, instance_type, hourly_usd):
+    rows = gpus.options(aws, config, current)['options']
+    selected = next((row for row in rows if row['instance_type'] == instance_type), None)
+    if selected is None:
+        raise CapacityError('Choose a GPU offered in this installation’s availability zone.')
+    if selected['blocker']:
+        raise CapacityError(selected['blocker'] + ' No GPU was added.')
+    if type(hourly_usd) not in (float, int) or hourly_usd != selected['hourly_usd']:
+        raise CapacityError('The GPU price changed. Refresh and review its price before launching.')
+    return selected
 
 
 def deadline(config):
@@ -68,16 +82,22 @@ def workloads(node):
 
 
 def status(config):
-    current = group(config)
+    current = groups(config)
     nodes = {n['metadata']['name']: n for n in gpu_nodes()}
     pods = kubectl('get', 'pods', '--all-namespaces')['items']
-    members = {i['InstanceId'] for i in current['Instances']}
+    members = {i['InstanceId'] for row in current for i in row['Instances']}
     for name, node in nodes.items():
         ready = any(c['type'] == 'Ready' and c['status'] == 'True' for c in node.get('status', {}).get('conditions', []))
         if name not in members and not ready:
             kubectl('delete', 'node', name, '--ignore-not-found')
     machines = []
-    for item in current['Instances']:
+    specs = {}
+    if any(row['Instances'] or row['DesiredCapacity'] for row in current):
+        try:
+            specs = {row['instance_type']: row for row in gpus.catalogue(aws, config['region'], config['zone'])}
+        except CapacityError:
+            pass  # Keep removal available if the catalogue or price API is down.
+    for item in [item for row in current for item in row['Instances']]:
         # Worker names are their instance IDs; no address is exposed to the browser.
         node = nodes.get(item['InstanceId'], {})
         ready = any(c['type'] == 'Ready' and c['status'] == 'True' for c in node.get('status', {}).get('conditions', []))
@@ -87,62 +107,89 @@ def status(config):
                          if p.get('spec', {}).get('nodeName') == item['InstanceId']
                          and p.get('status', {}).get('phase') not in ('Succeeded', 'Failed')
                          and p['metadata'].get('labels', {}).get('model')})
-        machines.append({'id': item['InstanceId'], 'state': state, 'models': models})
+        machines.append({**specs.get(item['InstanceType'], {'instance_type': item['InstanceType'], 'name': item['InstanceType'], 'memory_gb': None, 'gpu_count': None, 'hourly_usd': None}), 'id': item['InstanceId'], 'state': state, 'models': models})
     stop = deadline(config)
     error = ''
-    if current['DesiredCapacity'] > sum(m['state'] == 'ready' for m in machines):
-        activities = aws('autoscaling', 'describe-scaling-activities', auto_scaling_group_name=config['group'], max_records=1)['Activities']
-        if activities and activities[0]['StatusCode'] in ('Failed', 'Cancelled'):
-            error = 'AWS could not start the GPU. Check GPU quota and regional capacity in AWS, or cancel the pending GPU.'
-    return {'desired': current['DesiredCapacity'], 'limit': current['MaxSize'], 'machines': machines,
-            'stop_at': stop.isoformat() if stop else None, 'error': error,
-            'instance_type': 'g5.2xlarge', 'name': 'NVIDIA A10G', 'memory_gb': 24,
-            'hourly_usd': 1.212, 'hours': config['hours'], 'region': 'us-east-2'}
+    pending = 0
+    for row in current:
+        if row['DesiredCapacity'] and not row['Instances']:
+            instance_type = gpus.group_type(row)
+            machines.append({**specs.get(instance_type, {'instance_type': instance_type, 'name': instance_type}),
+                             'id': 'pending-' + str(config['groups'].index(row['AutoScalingGroupName'])),
+                             'state': 'starting', 'models': []})
+        if row['DesiredCapacity'] > sum(item.get('LifecycleState') == 'InService' and any(m['id'] == item['InstanceId'] and m['state'] == 'ready' for m in machines) for item in row['Instances']):
+            pending += 1
+            activities = aws('autoscaling', 'describe-scaling-activities', auto_scaling_group_name=row['AutoScalingGroupName'], max_records=1)['Activities']
+            if activities and activities[0]['StatusCode'] in ('Failed', 'Cancelled'):
+                error = 'AWS could not start a selected GPU. Check quota and capacity in AWS, or cancel the pending machine and choose another type.'
+    return {'desired': sum(row['DesiredCapacity'] for row in current), 'limit': len(current), 'machines': machines,
+            'pending': pending, 'stop_at': stop.isoformat() if stop else None, 'error': error,
+            'hours': config['hours'], 'region': config['region']}
 
 
 def set_deadline(config, stop):
     aws('scheduler', 'update-schedule', name=config['schedule'], state='ENABLED',
         schedule_expression=f'at({stop.strftime("%Y-%m-%dT%H:%M:%S")})', schedule_expression_timezone='UTC',
         flexible_time_window={'Mode': 'OFF'}, target={
-            'Arn': 'arn:aws:scheduler:::aws-sdk:autoscaling:setDesiredCapacity',
+            'Arn': config['stop_function'],
             'RoleArn': config['stop_role'],
-            'Input': json.dumps({'AutoScalingGroupName': config['group'], 'DesiredCapacity': 0, 'HonorCooldown': False}),
+            'Input': '{}',
             'RetryPolicy': {'MaximumEventAgeInSeconds': 3600, 'MaximumRetryAttempts': 3}})
 
 
-def resize(config, expected, target):
-    current = group(config)
-    if type(expected) is not int or expected != current['DesiredCapacity']:
+def resize(config, expected, target, instance_type=None, hourly_usd=None):
+    current = groups(config)
+    desired = sum(row['DesiredCapacity'] for row in current)
+    if type(expected) is not int or expected != desired:
         raise CapacityError('GPU capacity changed. Refresh and try again.')
-    if type(target) is not int or not 0 <= target <= current['MaxSize']:
-        raise CapacityError('Choose a GPU count within this installation’s limit.')
+    if type(target) is not int or not 0 <= target <= len(current):
+        raise CapacityError('Choose a machine count within this installation’s limit.')
     if target == expected + 1:
-        quota = aws('service-quotas', 'get-service-quota', service_code='ec2', quota_code='L-DB2E81BA')['Quota']['Value']
-        if quota < target * 8:
-            raise CapacityError(f'AWS allows {int(quota)} GPU vCPUs in Ohio. Request at least {target * 8} Running On-Demand G and VT vCPUs in Service Quotas, then retry. No GPU was added.')
+        selected_gpu(config, current, instance_type, hourly_usd)
+        available = next((row for row in current if row['DesiredCapacity'] == 0 and not row['Instances']), None)
+        if available is None:
+            raise CapacityError('Wait for a removed GPU to finish shutting down, then retry.')
         stop = deadline(config)
-        # Expired rentals must finish terminating before starting a new one.
         if expected and (not stop or stop <= now() + dt.timedelta(minutes=2)):
             raise CapacityError('This GPU session is ending. Remove the GPUs before starting another session.')
         if not expected:
-            if current['Instances']:
+            if any(row['Instances'] for row in current):
                 raise CapacityError('Wait for the previous GPUs to finish shutting down, then retry.')
             stop = now() + dt.timedelta(hours=config['hours'])
         # Schedule first: never create billable capacity without its independent deadline.
         set_deadline(config, stop)
-    elif target != 0:
-        raise CapacityError('Add one GPU at a time, or remove a specific GPU.')
-    else:
-        # Cancel pending launches only. Live nodes must use the cordon/check/remove path.
-        members = {i['InstanceId'] for i in current['Instances']}
-        if any(n['metadata']['name'] in members for n in gpu_nodes()):
-            raise CapacityError('Remove each GPU before cancelling the remaining pending capacity.')
-    aws('autoscaling', 'set-desired-capacity', auto_scaling_group_name=config['group'], desired_capacity=target)
+        # Each CloudFormation-owned group contains one machine. Changing an empty
+        # group cannot change the type or replacement cost of an existing GPU.
+        aws('autoscaling', 'update-auto-scaling-group', auto_scaling_group_name=available['AutoScalingGroupName'],
+            min_size=0, max_size=1, vpc_zone_identifier=config['subnet'], mixed_instances_policy={
+                'LaunchTemplate': {'LaunchTemplateSpecification': {'LaunchTemplateId': config['template'], 'Version': config['template_version']},
+                                   'Overrides': [{'InstanceType': instance_type}]},
+                'InstancesDistribution': {'OnDemandPercentageAboveBaseCapacity': 100}})
+        aws('autoscaling', 'set-desired-capacity', auto_scaling_group_name=available['AutoScalingGroupName'], desired_capacity=1)
+        return {'status': 'accepted', 'instance_type': instance_type}
+    if target != 0:
+        raise CapacityError('Add one machine at a time, or remove a specific GPU.')
+    members = {i['InstanceId'] for row in current for i in row['Instances']}
+    if any(n['metadata']['name'] in members for n in gpu_nodes()):
+        raise CapacityError('Remove each GPU before cancelling the remaining pending capacity.')
+    for row in current:
+        if row['DesiredCapacity']:
+            aws('autoscaling', 'set-desired-capacity', auto_scaling_group_name=row['AutoScalingGroupName'], desired_capacity=0)
 
 
 def remove(config, instance):
-    current = group(config)
-    item = next((i for i in current['Instances'] if i['InstanceId'] == instance), None)
+    current = groups(config)
+    if isinstance(instance, str) and instance.startswith('pending-'):
+        slot = int(instance.removeprefix('pending-'))
+        if not 0 <= slot < len(config['groups']):
+            raise CapacityError('Unknown GPU machine.')
+        row = next(row for row in current if row['AutoScalingGroupName'] == config['groups'][slot])
+        if row['Instances']:
+            raise CapacityError('This machine has started. Refresh and remove it from GPUs.')
+        if row['DesiredCapacity']:
+            aws('autoscaling', 'set-desired-capacity', auto_scaling_group_name=row['AutoScalingGroupName'], desired_capacity=0)
+        return
+    item = next((i for row in current for i in row['Instances'] if i['InstanceId'] == instance), None)
     if item is None or item['LifecycleState'].startswith('Terminating'):
         return  # A retry must not remove a different GPU.
     node = next((n for n in gpu_nodes() if n['metadata']['name'] == instance), None)
@@ -178,12 +225,14 @@ class Handler(BaseHTTPRequestHandler):
             config = json.loads(CONFIG.read_text())
             if self.command == 'GET' and self.path == '/':
                 return self.respond(200, status(config))
+            if self.command == 'GET' and self.path == '/options':
+                return self.respond(200, gpus.options(aws, config, groups(config)))
             length = int(self.headers.get('Content-Length', '0'))
             if not 0 < length <= 1024:
                 return self.respond(400, {'detail': 'Invalid capacity request.'})
             body = json.loads(self.rfile.read(length))
             if self.command == 'POST' and self.path == '/':
-                resize(config, body.get('expected'), body.get('desired'))
+                resize(config, body.get('expected'), body.get('desired'), body.get('instance_type'), body.get('hourly_usd'))
             elif self.command == 'POST' and self.path == '/remove':
                 remove(config, body.get('id'))
             else:

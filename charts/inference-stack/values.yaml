@@ -1,5 +1,5 @@
 launcher:
-  image: ghcr.io/berriai/inference-stack/launcher:0.2.2
+  image: ghcr.io/berriai/inference-stack/launcher:0.3.0
   imagePullPolicy: IfNotPresent
   # Namespace-scoped Helm deployment access. Disable for command-only use.
   manageModels: true

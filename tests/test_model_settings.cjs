@@ -11,6 +11,52 @@ before(async () => {
 });
 after(async () => { await browser?.close(); });
 
+test('AWS picker submits the chosen multi-GPU machine and its displayed price', async () => {
+  const {page} = await modelPage(0,{mode:'kubernetes',capacity:{desired:0,limit:4,machines:[],hours:4,region:'us-east-2'}});
+  const options=[{instance_type:'g5.xlarge',name:'NVIDIA A10G',memory_gb:22.4,gpu_count:1,vcpus:4,host_memory_gb:16,hourly_usd:1.006,blocker:''},
+    {instance_type:'g6e.12xlarge',name:'NVIDIA L40S',memory_gb:44.7,gpu_count:4,vcpus:48,host_memory_gb:384,hourly_usd:10.345,blocker:''}];
+  const submitted=[];
+  await page.route('**/api/gpus/options',route=>route.fulfill({json:{options}}));
+  await page.route('**/api/gpus',route=>{submitted.push(route.request().postDataJSON());return route.fulfill({json:{status:'accepted'}});});
+  try {
+    await page.getByRole('button',{name:'inference stack',exact:true}).click();
+    await page.getByRole('button',{name:'Add GPU',exact:true}).click();
+    await page.getByLabel('AWS GPU',{exact:true}).selectOption('g6e.12xlarge');
+    assert.match(await page.locator('main').innerText(),/Price is per machine/);
+    await page.getByRole('button',{name:'Add GPU · $10.345/hour',exact:true}).click();
+    await page.getByRole('heading',{name:'GPUs',exact:true}).waitFor();
+    assert.deepEqual(submitted,[{expected:0,desired:1,instance_type:'g6e.12xlarge',hourly_usd:10.345}]);
+  } finally {await page.close();}
+});
+
+test('AWS quota blocker is visible before launching and offers the matching quota page', async () => {
+  const {page} = await modelPage(0,{mode:'kubernetes',capacity:{desired:0,limit:4,machines:[],hours:4,region:'us-east-2'}});
+  const blocker='Needs 16 vCPUs; 0 remain in your AWS quota.';
+  await page.route('**/api/gpus/options',route=>route.fulfill({json:{options:[{instance_type:'p5.4xlarge',name:'NVIDIA H100',memory_gb:80,gpu_count:1,vcpus:16,host_memory_gb:256,hourly_usd:4,blocker,quota_url:'https://us-east-2.console.aws.amazon.com/servicequotas/home'}]}}));
+  try {
+    await page.getByRole('button',{name:'inference stack',exact:true}).click();
+    await page.getByRole('button',{name:'Add GPU',exact:true}).click();
+    await page.getByText(blocker,{exact:true}).waitFor();
+    assert.equal(await page.getByRole('button',{name:'Add GPU · $4.000/hour',exact:true}).isDisabled(),true);
+    assert.equal(await page.getByRole('link',{name:'AWS quotas'}).count(),1);
+  } finally {await page.close();}
+});
+
+test('An AWS catalogue failure can be retried without enabling an unpriced launch', async () => {
+  const {page} = await modelPage(0,{mode:'kubernetes',capacity:{desired:0,limit:4,machines:[],hours:4,region:'us-east-2'}});
+  let fail=true;
+  await page.route('**/api/gpus/options',route=>fail?route.fulfill({status:503,json:{detail:'Could not read AWS prices.'}}):route.fulfill({json:{options:[{instance_type:'g5.xlarge',name:'NVIDIA A10G',memory_gb:22.4,gpu_count:1,vcpus:4,host_memory_gb:16,hourly_usd:1.006,blocker:''}]}}));
+  try {
+    await page.getByRole('button',{name:'inference stack',exact:true}).click();
+    await page.getByRole('button',{name:'Add GPU',exact:true}).click();
+    await page.getByText('Could not read AWS prices.',{exact:true}).waitFor();
+    assert.equal(await page.getByRole('button',{name:'Add GPU',exact:true}).isDisabled(),true);
+    fail=false;await page.getByRole('button',{name:'Retry GPU check',exact:true}).click();
+    await page.getByRole('button',{name:'Add GPU · $1.006/hour',exact:true}).waitFor();
+    assert.equal(await page.getByRole('button',{name:'Add GPU · $1.006/hour',exact:true}).isEnabled(),true);
+  } finally {await page.close();}
+});
+
 async function modelPage(gpus = 8, overrides = {}) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
@@ -25,6 +71,7 @@ async function modelPage(gpus = 8, overrides = {}) {
   const info = {id: 'example/model', suggested_gpus: 1, suggested_context: 4096, max_context: 32768};
   await page.route('http://inference-stack.test/**', async route => {
     const url = new URL(route.request().url());
+    if (url.pathname === '/api/gpus/options') return route.fulfill({json: {options: [{instance_type:'g5.2xlarge',name:'NVIDIA A10G',memory_gb:24,gpu_count:1,vcpus:8,host_memory_gb:32,hourly_usd:1.212,blocker:''}]}});
     if (url.pathname === '/api/status') return route.fulfill({json: status});
     if (url.pathname.startsWith('/api/catalog/')) return route.fulfill({json: info});
     if (url.pathname === '/api/models' && route.request().method() === 'POST') {
@@ -123,7 +170,7 @@ test('Empty AWS home exposes zero counts and a priced GPU action without install
     assert.equal(rents.length, 0);
     await page.getByRole('button', {name: 'Add GPU · $1.212/hour', exact: true}).click();
     await page.getByText('AWS GPU quota is 0. No GPU was added.', {exact: true}).waitFor();
-    assert.deepEqual(rents, [{expected: 0, desired: 1}]);
+    assert.deepEqual(rents, [{expected: 0, desired: 1, instance_type: 'g5.2xlarge', hourly_usd: 1.212}]);
     assert.equal(submitted.length, 0);
     assert.equal(await page.getByRole('button', {name: 'Add GPU · $1.212/hour', exact: true}).isEnabled(), true);
   } finally { await page.close(); }
@@ -143,7 +190,7 @@ test('GPU rental moves to pending capacity and refresh shows availability', asyn
     await page.getByRole('button', {name: 'Add GPU · $1.212/hour', exact: true}).click();
     await page.getByRole('heading', {name: 'GPUs', exact: true}).waitFor();
     assert.match(await page.locator('main').innerText(), /Starting 1 GPU/);
-    status.capacity.machines = [{id: 'i-0123456789abcdef0', state: 'ready', models: []}];
+    status.capacity.machines = [{id: 'i-0123456789abcdef0', state: 'ready', models: [], instance_type:'g5.2xlarge',name:'NVIDIA A10G',memory_gb:24,gpu_count:1,hourly_usd:1.212}];
     status.hardware = {count: 1, devices: [{name: 'NVIDIA A10G', count: 1, available: 1, memory_gb: 24}], error: ''};
     await page.getByRole('cell', {name: 'Available', exact: true}).waitFor({timeout: 10000});
     assert.equal(await page.getByRole('button', {name: 'Deploy a model', exact: true}).isVisible(), true);

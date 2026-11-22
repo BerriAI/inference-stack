@@ -95,6 +95,7 @@ def gpu_inventory(exclude_model: str = "") -> dict:
             labels = node["metadata"].get("labels", {})
             memory = labels.get("nvidia.com/gpu.memory")
             devices.append({"name": labels.get("nvidia.com/gpu.product", "NVIDIA GPU"), "count": count,
+                            "instance_type": labels.get("node.kubernetes.io/instance-type", ""),
                             "available": max(0, count - occupied.get(node["metadata"]["name"], 0)),
                             "memory_gb": round(float(memory) / 1024, 1) if memory else None})
         return {"count": sum(d["count"] for d in devices), "devices": devices, "error": ""}
@@ -170,6 +171,8 @@ def models(registered: list[dict] | None = None) -> list[dict]:
 def values(request, name: str) -> dict:
     return {"model": request.model, "replicas": request.replicas, "gpusPerReplica": request.gpus_per_replica,
             "maxModelLen": request.context, "simulate": request.simulate,
+            "minGpuMemoryMiB": request.min_gpu_memory_mib,
+            "nodeSelector": {"node.kubernetes.io/instance-type": request.instance_type} if request.add_gpu else {},
             "huggingFaceSecret": settings.HF_SECRET, "stackRelease": settings.HELM_STACK_RELEASE,
             "llm-d-router-standalone": {"router": {"modelServers": {"matchLabels": {"model": name}},
                                                     "proxy": {"presets": {"envoy": {"configMap": {"name": f"{name}-envoy"}}}}}}}

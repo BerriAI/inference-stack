@@ -33,6 +33,19 @@ spec:
         prometheus.io/port: "8000"
     spec:
       {{- if not .Values.simulate }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{ . | toJson }}
+      {{- end }}
+      {{- if gt (int .Values.minGpuMemoryMiB) 0 }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.memory
+                    operator: Gt
+                    values: [{{ sub (int .Values.minGpuMemoryMiB) 1 | quote }}]
+      {{- end }}
       tolerations:
         - key: nvidia.com/gpu
           operator: Exists

@@ -11,6 +11,26 @@ from test_launcher import app
 
 class ChartTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
+    def test_mixed_gpu_fleet_schedules_on_matching_capacity(self):
+        chart = Path(__file__).resolve().parents[1] / "charts/model"
+        for simulated in (False, True):
+            request = app.AddModel(model="example/model", simulate=simulated, add_gpu=True,
+                                   instance_type="g6e.12xlarge", min_gpu_memory_mib=40000, gpus_per_replica=4)
+            result = subprocess.run(["helm", "template", "model", str(chart), "--values", "-"],
+                                    input=json.dumps(app.kubernetes.values(request, "model")),
+                                    text=True, capture_output=True, timeout=20, check=True)
+            resources = [r for r in yaml.safe_load_all(result.stdout) if r]
+            pod = next(r for r in resources if r["kind"] == "Deployment" and r["metadata"]["name"] == "model-vllm")["spec"]["template"]["spec"]
+            if simulated:
+                self.assertNotIn("affinity", pod)
+                self.assertNotIn("nodeSelector", pod)
+            else:
+                self.assertEqual(pod["nodeSelector"], {"node.kubernetes.io/instance-type": "g6e.12xlarge"})
+                expressions = pod["affinity"]["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]["nodeSelectorTerms"][0]["matchExpressions"]
+                self.assertEqual(expressions, [{"key": "nvidia.com/gpu.memory", "operator": "Gt", "values": ["39999"]}])
+                self.assertEqual(pod["containers"][0]["resources"]["limits"]["nvidia.com/gpu"], 4)
+
+    @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
     def test_aws_host_access_is_opt_in_and_uses_admin_secret(self):
         chart = Path(__file__).resolve().parents[1] / "charts/inference-stack"
         for enabled in (False, True):

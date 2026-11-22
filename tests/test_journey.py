@@ -28,15 +28,15 @@ class JourneyTests(unittest.TestCase):
         with patch.object(app.settings,'AWS_CAPACITY_SOCKET','/test.sock'), \
              patch.object(app,'model_details',return_value={'blocker':'','estimated_gb':48,'weights_gb':32}), \
              patch.object(app.kubernetes,'gpu_inventory',return_value={'count':0,'devices':[]}), \
-             patch.object(app,'capacity_request',return_value={'memory_gb':24,'error':''}) as capacity:
-            response=self.client.post('/api/models',json={'model':'example/model','add_gpu':True,'expected_capacity':0})
+             patch.object(app,'capacity_request',return_value={'options':[{'instance_type':'g5.2xlarge','hourly_usd':1.212,'memory_gb':24,'gpu_count':1,'blocker':''}]}) as capacity:
+            response=self.client.post('/api/models',json={'model':'example/model','add_gpu':True,'expected_capacity':0,'instance_type':'g5.2xlarge','hourly_usd':1.212})
         self.assertEqual(response.status_code,422)
         self.assertIn('smaller model',response.json()['detail'])
         self.assertFalse(any(call.args and call.args[0]=='POST' for call in capacity.call_args_list))
         self.assertFalse(app.operation_lock.locked())
 
     def test_gpu_deployment_waits_for_capacity_then_registers_the_model(self):
-        hardware={'count':1,'devices':[{'available':1,'memory_gb':24}]}
+        hardware={'count':1,'devices':[{'available':1,'memory_gb':24,'instance_type':'g5.2xlarge'}]}
         name=app.public_name('example/model')
         with patch.object(app.settings,'MODE','kubernetes'), \
              patch.object(app.settings,'AWS_CAPACITY_SOCKET','/test.sock'), \
@@ -46,13 +46,35 @@ class JourneyTests(unittest.TestCase):
              patch.object(app.kubernetes,'gpu_inventory',return_value=hardware), \
              patch.object(app.kubernetes,'deploy') as deploy, \
              patch.object(app.litellm_client,'list_models',return_value=[{'name':name,'served_model':'example/model'}]):
-            response=self.client.post('/api/models',json={'model':'example/model','add_gpu':True,'expected_capacity':0})
+            response=self.client.post('/api/models',json={'model':'example/model','add_gpu':True,'expected_capacity':0,'instance_type':'g5.2xlarge','hourly_usd':1.212})
         self.assertEqual(response.status_code,200)
-        capacity.assert_any_call('POST',body={'expected':0,'desired':1})
+        capacity.assert_any_call('POST',body={'expected':0,'desired':1,'instance_type':'g5.2xlarge','hourly_usd':1.212})
         self.assertEqual(validate.call_count,2)
         deploy.assert_called_once()
         self.assertEqual(app.deployment['error'],'')
         self.assertFalse(app.operation_lock.locked())
+
+    def test_multiple_gpus_per_machine_and_mixed_memory_validation(self):
+        request=app.AddModel(model='example/model',gpus_per_replica=4,add_gpu=True,
+                             instance_type='g6e.12xlarge',hourly_usd=10.345)
+        selected={'instance_type':'g6e.12xlarge','hourly_usd':10.345,'gpu_count':4,'memory_gb':44.7,'blocker':''}
+        hardware={'count':5,'devices':[{'available':1,'memory_gb':16,'instance_type':'g4dn.xlarge'},
+                                      {'available':4,'memory_gb':44.7,'instance_type':'g6e.12xlarge'}]}
+        with patch.object(app.settings,'MODE','kubernetes'), \
+             patch.object(app.settings,'AWS_CAPACITY_SOCKET','/test.sock'), \
+             patch.object(app,'model_details',return_value={'blocker':'','estimated_gb':120,'weights_gb':100}), \
+             patch.object(app.kubernetes,'gpu_inventory',return_value=hardware), \
+             patch.object(app,'capacity_request',return_value={'options':[selected]}):
+            app.validate_allocation(request,adding_gpu=True)
+            self.assertEqual(request.min_gpu_memory_mib,30720)
+            app.validate_allocation(request)
+            request.gpus_per_replica=1
+            with self.assertRaises(app.HTTPException):
+                app.validate_allocation(request)
+            request.gpus_per_replica=4
+            request.replicas=2
+            with self.assertRaises(app.HTTPException):
+                app.validate_allocation(request,adding_gpu=True)
 
     def test_quota_rejection_does_not_start_model_or_lose_the_error(self):
         with patch.object(app.settings,'MODE','kubernetes'), \
@@ -61,7 +83,7 @@ class JourneyTests(unittest.TestCase):
              patch.object(app.kubernetes,'permissions',return_value={'deploy':True}), \
              patch.object(app,'capacity_request',side_effect=app.HTTPException(409,'Quota is zero. No GPU was added.')), \
              patch.object(app.kubernetes,'deploy') as deploy:
-            response=self.client.post('/api/models',json={'model':'example/model','add_gpu':True,'expected_capacity':0})
+            response=self.client.post('/api/models',json={'model':'example/model','add_gpu':True,'expected_capacity':0,'instance_type':'g5.2xlarge','hourly_usd':1.212})
         self.assertEqual(response.status_code,409)
         self.assertIn('No GPU was added',response.json()['detail'])
         deploy.assert_not_called()

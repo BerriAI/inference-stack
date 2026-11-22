@@ -4,6 +4,7 @@ import datetime
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tarfile
@@ -77,6 +78,22 @@ class BootstrapTests(unittest.TestCase):
         bootstrap.write(path, 'replacement')
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
+    def test_worker_labels_describe_the_actual_gpu_and_instance(self):
+        def run(*args):
+            if '--query-gpu=memory.total' in args: return '46068\n46068\n'
+            if '--query-gpu=name' in args: return 'NVIDIA L40S\nNVIDIA L40S\n'
+            return ''
+        with patch.object(bootstrap,'run',side_effect=run), \
+             patch.object(bootstrap,'aws',return_value={'SecretString':json.dumps({'server':'https://example.com','token':'test-only-join-token'})}), \
+             patch.object(bootstrap,'metadata',side_effect=lambda field:'test-instance' if field=='instance-id' else 'g6e.12xlarge'), \
+             patch.dict(os.environ,JOIN_SECRET='test-only-secret'), \
+             patch.object(bootstrap,'install_k3s') as install:
+            bootstrap.install_worker()
+        labels=install.call_args.args[0]['node-label']
+        self.assertIn('nvidia.com/gpu.product=NVIDIA-L40S',labels)
+        self.assertIn('nvidia.com/gpu.memory=46068',labels)
+        self.assertIn('node.kubernetes.io/instance-type=g6e.12xlarge',labels)
+
     def test_credentials_and_untrusted_host_do_not_enter_proxy_config(self):
         credentials = {'masterkey': 'test-only-generated-masterkey', 'database': 'test-only-generated-database'}
         values = bootstrap.chart_values('https://example.cloudfront.net', 'test-only-admin-password-0123456789', credentials)
@@ -143,6 +160,24 @@ class PrerequisiteTests(unittest.TestCase):
         machine = TEMPLATE['Resources']['Machine']['Properties']
         self.assertEqual(machine['MetadataOptions']['HttpPutResponseHopLimit'], 1)
         self.assertEqual(TEMPLATE['Resources']['Ready']['CreationPolicy']['ResourceSignal']['Count'], 1)
+
+    def test_all_gpu_groups_are_stack_owned_empty_and_individually_bounded(self):
+        groups=[r['Properties'] for r in TEMPLATE['Resources'].values() if r['Type']=='AWS::AutoScaling::AutoScalingGroup']
+        self.assertEqual(len(groups),4)
+        for group in groups:
+            self.assertEqual((group['MinSize'],group['MaxSize'],group['DesiredCapacity']),('0','1','0'))
+            self.assertEqual(group['MixedInstancesPolicy']['InstancesDistribution']['OnDemandPercentageAboveBaseCapacity'],100)
+
+    def test_shutdown_attempts_every_group_and_retries_partial_failure(self):
+        client=Mock()
+        client.set_desired_capacity.side_effect=[RuntimeError('test failure'),None,None,None]
+        code={}
+        with patch.dict(sys.modules,boto3=SimpleNamespace(client=lambda _:client)):
+            exec(TEMPLATE['Resources']['StopFunction']['Properties']['Code']['ZipFile'],code)
+        with patch.dict(os.environ,GPU_GROUPS='test-1,test-2,test-3,test-4'):
+            with self.assertRaisesRegex(RuntimeError,'retry all groups'):code['handler']({},None)
+        self.assertEqual(client.set_desired_capacity.call_count,4)
+        self.assertTrue(all(c.kwargs['DesiredCapacity']==0 for c in client.set_desired_capacity.call_args_list))
 
 
 if __name__ == '__main__':
