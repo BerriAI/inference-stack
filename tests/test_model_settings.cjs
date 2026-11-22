@@ -37,7 +37,7 @@ async function modelPage(gpus = 8, overrides = {}) {
   });
   await page.goto('http://inference-stack.test/#model/example%2Fmodel');
   if (!status.models.length) await page.getByText('Settings', {exact: true}).click();
-  return {page, submitted};
+  return {page, submitted, status};
 }
 
 for (const [label, field, value] of [['Replicas', 'replicas', 2], ['GPUs per replica', 'gpus_per_replica', 2], ['Context length', 'context', 8192]]) {
@@ -73,7 +73,7 @@ test('GPU allocation updates and recovers without replacing the focused input', 
   } finally { await page.close(); }
 });
 
-test('GPU details distinguish detected memory use and expose safe AWS lifecycle links', async () => {
+test('GPU details distinguish detected memory use and reject unsafe AWS lifecycle links', async () => {
   const {page} = await modelPage(1, {
     hardware: {count: 1, error: '', devices: [{name: 'NVIDIA A10G', memory_gb: 22.5, used_gb: 10, count: 1, available: 1}]},
     machine: {provider: 'aws', instance_type: 'g5.2xlarge', hourly_usd: 1.212, region: 'us-east-2',
@@ -84,8 +84,7 @@ test('GPU details distinguish detected memory use and expose safe AWS lifecycle 
     await page.getByRole('heading', {name: 'GPUs', exact: true}).waitFor();
     assert.equal(await page.getByRole('cell', {name: '10 GB', exact: true}).count(), 1);
     assert.match(await page.locator('main').innerText(), /Detected GPUs may already be busy/);
-    assert.match(await page.locator('main').innerText(), /Removing a model does not stop the machine/);
-    assert.equal(await page.getByRole('link', {name: 'Manage in AWS ↗', exact: true}).count(), 1);
+    assert.match(await page.locator('main').innerText(), /stays online when no GPUs are running/);
     assert.equal(await page.getByRole('link', {name: 'Delete installation ↗', exact: true}).count(), 0);
   } finally { await page.close(); }
 });
@@ -96,8 +95,98 @@ test('Ready model opens the native Playground and identifies its API model name'
     components: {litellm: {healthy: true, url: 'https://example.com/litellm/ui'}, grafana: {healthy: true}, router: {healthy: true}},
   });
   try {
-    assert.equal(await page.getByRole('link', {name: 'Open LiteLLM ↗'}).getAttribute('href'), 'https://example.com/litellm/ui/playground/');
+    assert.equal(await page.getByRole('link', {name: 'Try in LiteLLM ↗'}).getAttribute('href'), 'https://example.com/litellm/ui/playground/');
     assert.match(await page.locator('main').innerText(), /Select example-model/);
     assert.match(await page.locator('main').innerText(), /Simulation returns canned text/);
   } finally { await page.close(); }
+});
+
+
+test('Empty AWS home exposes zero counts and a priced GPU action without installing a model', async () => {
+  const {page, submitted} = await modelPage(0, {
+    mode: 'kubernetes', capacity: {desired: 0, limit: 4, machines: [], hours: 4, hourly_usd: 1.212, name: 'NVIDIA A10G', memory_gb: 24, instance_type: 'g5.2xlarge'},
+  });
+  const rents = [];
+  await page.route('http://inference-stack.test/api/gpus', async route => {
+    rents.push(route.request().postDataJSON());
+    return route.fulfill({status: 409, json: {detail: 'AWS GPU quota is 0. No GPU was added.'}});
+  });
+  try {
+    await page.getByRole('button', {name: 'inference stack', exact: true}).click();
+    await page.getByRole('link', {name: '0 deployments', exact: true}).waitFor();
+    assert.equal(await page.getByRole('link', {name: '0 GPUs', exact: true}).count(), 1);
+    assert.equal(await page.locator('.stack-tile').count(), 2);
+    assert.equal(await page.getByText('No GPU detected', {exact: true}).count(), 0);
+    await page.getByRole('button', {name: 'Add GPU →', exact: true}).click();
+    await page.getByRole('heading', {name: 'Add GPU', exact: true}).waitFor();
+    assert.match(await page.locator('main').innerText(), /Removed automatically after 4 hours/);
+    assert.equal(rents.length, 0);
+    await page.getByRole('button', {name: 'Add GPU · $1.212/hour', exact: true}).click();
+    await page.getByText('AWS GPU quota is 0. No GPU was added.', {exact: true}).waitFor();
+    assert.deepEqual(rents, [{expected: 0, desired: 1}]);
+    assert.equal(submitted.length, 0);
+    assert.equal(await page.getByRole('button', {name: 'Add GPU · $1.212/hour', exact: true}).isEnabled(), true);
+  } finally { await page.close(); }
+});
+
+test('GPU rental moves to pending capacity and refresh shows availability', async () => {
+  const {page, status} = await modelPage(0, {
+    mode: 'kubernetes', capacity: {desired: 0, limit: 4, machines: [], hours: 4, hourly_usd: 1.212, name: 'NVIDIA A10G', memory_gb: 24, instance_type: 'g5.2xlarge'},
+  });
+  await page.route('http://inference-stack.test/api/gpus', async route => {
+    status.capacity.desired = route.request().postDataJSON().desired;
+    return route.fulfill({json: {status: 'accepted'}});
+  });
+  try {
+    await page.getByRole('button', {name: 'inference stack', exact: true}).click();
+    await page.getByRole('button', {name: 'Add GPU →', exact: true}).click();
+    await page.getByRole('button', {name: 'Add GPU · $1.212/hour', exact: true}).click();
+    await page.getByRole('heading', {name: 'GPUs', exact: true}).waitFor();
+    assert.match(await page.locator('main').innerText(), /Starting 1 GPU/);
+    status.capacity.machines = [{id: 'i-0123456789abcdef0', state: 'ready', models: []}];
+    status.hardware = {count: 1, devices: [{name: 'NVIDIA A10G', count: 1, available: 1, memory_gb: 24}], error: ''};
+    await page.getByRole('cell', {name: 'Available', exact: true}).waitFor({timeout: 10000});
+    assert.equal(await page.getByRole('button', {name: 'Deploy a model', exact: true}).isVisible(), true);
+    await page.getByRole('button', {name: 'inference stack', exact: true}).click();
+    await page.getByRole('link', {name: '1 GPU', exact: true}).waitFor();
+    assert.equal(await page.getByRole('link', {name: '1 GPU', exact: true}).count(), 1);
+    assert.match(await page.locator('.stack-summary').innerText(), /1 available/);
+  } finally { await page.close(); }
+});
+
+test('Model-first AWS flow shows price before provisioning and preserves selection on quota failure', async () => {
+  const {page,status}=await modelPage(0,{mode:'kubernetes',capacity:{desired:0,limit:4,machines:[],hours:4,hourly_usd:1.212,name:'NVIDIA A10G',memory_gb:24,instance_type:'g5.2xlarge'}});
+  const requests=[];
+  await page.route('http://inference-stack.test/api/models',async route=>{
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({status:409,json:{detail:'AWS GPU quota is zero. No GPU was added.'}});
+  });
+  try {
+    assert.match(await page.locator('[data-rental]').innerText(),/\$1\.212\/hour/);
+    assert.equal(requests.length,0);
+    await page.getByRole('button',{name:'Add GPU and deploy',exact:true}).click();
+    await page.getByText('AWS GPU quota is zero. No GPU was added.',{exact:true}).waitFor();
+    assert.equal(requests.length,1);
+    assert.equal(requests[0].add_gpu,true);
+    assert.equal(requests[0].expected_capacity,0);
+    assert.equal(requests[0].model,'example/model');
+    assert.equal(await page.getByRole('button',{name:'Add GPU and deploy',exact:true}).isEnabled(),true);
+    status.hardware={count:1,devices:[{count:1,available:1,memory_gb:24,name:'NVIDIA A10G'}],error:''};
+    status.capacity.desired=1;
+    await page.getByRole('button',{name:'Deploy',exact:true}).waitFor({timeout:10000});
+    assert.equal(await page.locator('[data-rental]').innerText(),'');
+  } finally {await page.close();}
+});
+
+test('Deployment details expose logs and contextual commands without replacing LiteLLM',async()=>{
+  const {page}=await modelPage(1,{api_base:'https://example.com/litellm/v1',models:[{served_model:'example/model',name:'example-model',status:'ready',replicas:1,gpus_per_replica:1,context:4096,simulate:true}],components:{litellm:{healthy:true,url:'https://example.com/litellm/ui'},grafana:{healthy:true},router:{healthy:true}}});
+  await page.route('http://inference-stack.test/api/models/example-model/diagnostics',route=>route.fulfill({json:{logs:'Model is serving',configuration:'{"engine":"simulator"}',commands:'docker logs --tail 200 vllm-0',note:'Run on the Docker host.',error:''}}));
+  try {
+    await page.getByRole('button',{name:'Logs',exact:true}).click();
+    await page.getByText('Model is serving',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Advanced',exact:true}).click();
+    await page.getByText('docker logs --tail 200 vllm-0',{exact:true}).waitFor();
+    assert.equal(await page.getByRole('link',{name:'Try in LiteLLM ↗'}).getAttribute('href'),'https://example.com/litellm/ui/playground/');
+    assert.match(await page.locator('.stack-api').innerText(),/https:\/\/example.com\/litellm\/v1/);
+  } finally {await page.close();}
 });

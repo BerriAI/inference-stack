@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Inference Stack on one A10G GPU in Ohio. Compute is $1.212/hour, plus 200 GB of disk, public IPv4 and network charges. Stops after 4 hours by default; disk charges continue until deletion.
+Description: Inference Stack in Ohio. Starts with 0 models and 0 GPUs on a $0.0832/hour CPU machine. Add GPUs in the UI for $1.212/hour each. Disk, IPv4 and network cost extra. Delete the stack to stop all charges.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -8,13 +8,13 @@ Metadata:
           default: Sign in to Inference Stack
         Parameters: [Password]
       - Label:
-          default: Trial settings
+          default: GPU settings
         Parameters: [StopAfterHours]
     ParameterLabels:
       Password:
         default: Admin password
       StopAfterHours:
-        default: Stop the machine after this many hours
+        default: Remove GPUs after this many hours
 
 Parameters:
   Password:
@@ -28,7 +28,12 @@ Parameters:
     Type: Number
     Default: 4
     AllowedValues: [1, 2, 4, 8, 12, 24]
-    Description: Compute stops automatically. Stored models and disk charges remain until you delete this stack.
+    Description: GPU machines and their disks are removed after this time. The launcher stays online and continues to incur charges until you delete the stack.
+
+Mappings:
+  Release:
+    Current:
+      Version: "@VERSION@"
 
 Resources:
   PrerequisiteRole:
@@ -77,20 +82,15 @@ Resources:
                   return {'GroupId': groups[0]['GroupId']}
               if ec2.meta.region_name != 'us-east-2':
                   raise ValueError('This release supports US East (Ohio). Choose us-east-2, then retry.')
-              simulation = properties['Simulate'] == 'true'
-              instance = 'm6i.xlarge' if simulation else 'g5.2xlarge'
-              quota_code = 'L-1216C47A' if simulation else 'L-DB2E81BA'
-              required = 4 if simulation else 8
-              quota = boto3.client('service-quotas').get_service_quota(ServiceCode='ec2', QuotaCode=quota_code)['Quota']['Value']
-              if quota < required:
-                  kind = 'Standard' if simulation else 'G and VT'
-                  raise ValueError(f'AWS allows {int(quota)} {kind} vCPUs in this region; this installation needs {required}. Request an EC2 quota increase in AWS Service Quotas, then retry. No GPU was launched.')
+              instance = 't3.large'
+              quota = boto3.client('service-quotas').get_service_quota(ServiceCode='ec2', QuotaCode='L-1216C47A')['Quota']['Value']
+              if quota < 2:
+                  raise ValueError('AWS needs 2 Standard on-demand vCPUs to run the launcher. Request an EC2 quota increase, then retry. No machine was launched.')
               offerings = ec2.describe_instance_type_offerings(LocationType='availability-zone', Filters=[{'Name': 'instance-type', 'Values': [instance]}])['InstanceTypeOfferings']
               zones = sorted(row['Location'] for row in offerings)
               if not zones:
                   raise ValueError('This machine type is not offered in this region. Launch in US East (Ohio).')
-              stop = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=int(properties['Hours']))
-              return {'InstanceType': instance, 'Zone': zones[0], 'StopAt': stop.strftime('%Y-%m-%dT%H:%M:%S')}
+              return {'InstanceType': instance, 'Zone': zones[0]}
 
           def handler(event, context):
               data, status, reason = {}, 'SUCCESS', 'AWS setup prerequisites passed.'
@@ -111,14 +111,12 @@ Resources:
     Properties:
       ServiceToken: !GetAtt PrerequisiteFunction.Arn
       Operation: Prepare
-      Simulate: 'false'
-      Hours: !Ref StopAfterHours
 
   Vpc:
     Type: AWS::EC2::VPC
     DependsOn: Prerequisites
     Properties:
-      CidrBlock: 10.42.0.0/16
+      CidrBlock: 10.50.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
   InternetGateway:
@@ -133,7 +131,7 @@ Resources:
     Properties:
       VpcId: !Ref Vpc
       AvailabilityZone: !GetAtt Prerequisites.Zone
-      CidrBlock: 10.42.0.0/24
+      CidrBlock: 10.50.0.0/24
       MapPublicIpOnLaunch: true
   RouteTable:
     Type: AWS::EC2::RouteTable
@@ -162,6 +160,13 @@ Resources:
     Properties:
       Description: Inference Stack admin password
       SecretString: !Ref Password
+  AgentJoin:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Join credentials for this installation's GPU workers
+      GenerateSecretString:
+        PasswordLength: 48
+        ExcludePunctuation: true
   MachineRole:
     Type: AWS::IAM::Role
     Properties:
@@ -181,13 +186,31 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
-                Resource: !Ref AdminPassword
+                Resource: [!Ref AdminPassword, !Ref AgentJoin]
               - Effect: Allow
                 Action: [cloudformation:DescribeStackResource, cloudformation:SignalResource]
                 Resource: !Ref AWS::StackId
               - Effect: Allow
                 Action: cloudfront:GetDistribution
                 Resource: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*
+              - Effect: Allow
+                Action: secretsmanager:PutSecretValue
+                Resource: !Ref AgentJoin
+              - Effect: Allow
+                Action: [autoscaling:DescribeAutoScalingGroups, autoscaling:DescribeScalingActivities, servicequotas:GetServiceQuota]
+                Resource: '*'
+              - Effect: Allow
+                Action: [autoscaling:SetDesiredCapacity, autoscaling:TerminateInstanceInAutoScalingGroup]
+                Resource: !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup}
+              - Effect: Allow
+                Action: [scheduler:GetSchedule, scheduler:UpdateSchedule]
+                Resource: !GetAtt StopSchedule.Arn
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt StopRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: scheduler.amazonaws.com
   MachineProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -196,8 +219,10 @@ Resources:
     Type: AWS::EC2::Instance
     DependsOn: [InternetRoute, SubnetRoute]
     Properties:
-      ImageId: '{{resolve:ssm:/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id}}'
+      ImageId: '{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id}}'
       InstanceType: !GetAtt Prerequisites.InstanceType
+      CreditSpecification:
+        CPUCredits: standard
       IamInstanceProfile: !Ref MachineProfile
       SubnetId: !Ref Subnet
       SecurityGroupIds: [!Ref MachineSecurityGroup]
@@ -208,7 +233,7 @@ Resources:
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
           Ebs:
-            VolumeSize: 200
+            VolumeSize: 40
             VolumeType: gp3
             Encrypted: true
             DeleteOnTermination: true
@@ -216,24 +241,154 @@ Resources:
         - Key: Name
           Value: !Ref AWS::StackName
       UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          set -euo pipefail
-          export AWS_DEFAULT_REGION='${AWS::Region}'
-          export STACK_ID='${AWS::StackId}'
-          export PASSWORD_SECRET='${AdminPassword}'
-          export STOP_AFTER_HOURS='${StopAfterHours}'
-          export INITIAL_STOP_AT='${Prerequisites.StopAt}'
-          export SIMULATE='false'
-          export STACK_VERSION='@VERSION@'
-          directory=$(mktemp -d)
-          trap 'rm -rf "$directory"' EXIT
-          trap 'aws cloudformation signal-resource --stack-name "$STACK_ID" --logical-resource-id Ready --unique-id installer --status FAILURE >/dev/null 2>&1 || true' ERR
-          release="https://github.com/BerriAI/inference-stack/releases/download/v$STACK_VERSION"
-          curl -fsSL --retry 3 "$release/aws-bootstrap.py" -o "$directory/aws-bootstrap.py"
-          curl -fsSL --retry 3 "$release/SHA256SUMS" -o "$directory/SHA256SUMS"
-          (cd "$directory"; awk '$2 == "aws-bootstrap.py"' SHA256SUMS | sha256sum --check --strict -)
-          python3 "$directory/aws-bootstrap.py"
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            set -euo pipefail
+            export AWS_DEFAULT_REGION='${AWS::Region}'
+            export STACK_ID='${AWS::StackId}'
+            export PASSWORD_SECRET='${AdminPassword}'
+            export JOIN_SECRET='${AgentJoin}'
+            export GPU_GROUP='${GpuGroup}'
+            export GPU_SCHEDULE='${StopSchedule}'
+            export GPU_STOP_ROLE='${StopRole.Arn}'
+            export STOP_AFTER_HOURS='${StopAfterHours}'
+            export STACK_VERSION='${Version}'
+            apt-get update -qq
+            apt-get install -y curl unzip python3
+            directory=$(mktemp -d)
+            trap 'rm -rf "$directory"' EXIT
+            curl -fsSL --retry 3 https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.40.3.zip -o "$directory/awscli.zip"
+            (cd "$directory"; echo '4770c06c4ecfc8ba94b60d89e6c7018ab7ea2cf5341b1ef05f6f93c5d6e8b705  awscli.zip' | sha256sum --check --strict -)
+            unzip -q "$directory/awscli.zip" -d "$directory"
+            "$directory/aws/install" --update
+            trap 'aws cloudformation signal-resource --stack-name "$STACK_ID" --logical-resource-id Ready --unique-id installer --status FAILURE >/dev/null 2>&1 || true' ERR
+            release="https://github.com/BerriAI/inference-stack/releases/download/v$STACK_VERSION"
+            curl -fsSL --retry 3 "$release/aws-bootstrap.py" -o "$directory/aws-bootstrap.py"
+            curl -fsSL --retry 3 "$release/SHA256SUMS" -o "$directory/SHA256SUMS"
+            (cd "$directory"; awk '$2 == "aws-bootstrap.py"' SHA256SUMS | sha256sum --check --strict -)
+            python3 "$directory/aws-bootstrap.py"
+          - Version: !FindInMap [Release, Current, Version]
+
+  WorkerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: GPU workers; cluster traffic only, no public inbound access.
+      VpcId: !Ref Vpc
+  ClusterApi:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MachineSecurityGroup
+      IpProtocol: tcp
+      FromPort: 6443
+      ToPort: 6443
+      SourceSecurityGroupId: !Ref WorkerSecurityGroup
+  ControlFlannel:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MachineSecurityGroup
+      IpProtocol: udp
+      FromPort: 8472
+      ToPort: 8472
+      SourceSecurityGroupId: !Ref WorkerSecurityGroup
+  WorkerFlannel:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref WorkerSecurityGroup
+      IpProtocol: udp
+      FromPort: 8472
+      ToPort: 8472
+      SourceSecurityGroupId: !Ref MachineSecurityGroup
+  WorkerMesh:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref WorkerSecurityGroup
+      IpProtocol: udp
+      FromPort: 8472
+      ToPort: 8472
+      SourceSecurityGroupId: !Ref WorkerSecurityGroup
+  WorkerKubelet:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref WorkerSecurityGroup
+      IpProtocol: tcp
+      FromPort: 10250
+      ToPort: 10250
+      SourceSecurityGroupId: !Ref MachineSecurityGroup
+  WorkerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: JoinThisInstallation
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref AgentJoin
+  WorkerProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref WorkerRole]
+  WorkerTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: '{{resolve:ssm:/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id}}'
+        InstanceType: g5.2xlarge
+        IamInstanceProfile:
+          Arn: !GetAtt WorkerProfile.Arn
+        SecurityGroupIds: [!Ref WorkerSecurityGroup]
+        MetadataOptions:
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: 200
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              set -euo pipefail
+              export AWS_DEFAULT_REGION='${AWS::Region}'
+              export JOIN_SECRET='${AgentJoin}'
+              export STACK_VERSION='${Version}'
+              directory=$(mktemp -d)
+              trap 'rm -rf "$directory"' EXIT
+              release="https://github.com/BerriAI/inference-stack/releases/download/v$STACK_VERSION"
+              curl -fsSL --retry 3 "$release/aws-bootstrap.py" -o "$directory/aws-bootstrap.py"
+              curl -fsSL --retry 3 "$release/SHA256SUMS" -o "$directory/SHA256SUMS"
+              (cd "$directory"; awk '$2 == "aws-bootstrap.py"' SHA256SUMS | sha256sum --check --strict -)
+              python3 "$directory/aws-bootstrap.py" --worker
+            - Version: !FindInMap [Release, Current, Version]
+  GpuGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: [InternetRoute, SubnetRoute]
+    Properties:
+      MinSize: '0'
+      MaxSize: '4'
+      DesiredCapacity: '0'
+      VPCZoneIdentifier: [!Ref Subnet]
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WorkerTemplate
+        Version: !GetAtt WorkerTemplate.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-gpu
+          PropagateAtLaunch: true
 
   VpcOrigin:
     Type: AWS::CloudFront::VpcOrigin
@@ -306,36 +461,37 @@ Resources:
               StringEquals:
                 aws:SourceAccount: !Ref AWS::AccountId
       Policies:
-        - PolicyName: StopThisMachine
+        - PolicyName: RemoveTheseGPUs
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action: ec2:StopInstances
-                Resource: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Machine}
+                Action: autoscaling:SetDesiredCapacity
+                Resource: !Sub arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${GpuGroup}
   StopSchedule:
     Type: AWS::Scheduler::Schedule
     Properties:
-      Description: Stop the initial trial even if installation does not finish.
-      ScheduleExpression: !Sub at(${Prerequisites.StopAt})
+      Description: Remove GPU machines at the deadline set when the first GPU is added.
+      State: DISABLED
+      ScheduleExpression: at(2099-01-01T00:00:00)
       ScheduleExpressionTimezone: UTC
       FlexibleTimeWindow:
         Mode: 'OFF'
       Target:
-        Arn: !Sub arn:${AWS::Partition}:scheduler:::aws-sdk:ec2:stopInstances
+        Arn: !Sub arn:${AWS::Partition}:scheduler:::aws-sdk:autoscaling:setDesiredCapacity
         RoleArn: !GetAtt StopRole.Arn
-        Input: !Sub '{"InstanceIds":["${Machine}"]}'
+        Input: !Sub '{"AutoScalingGroupName":"${GpuGroup}","DesiredCapacity":0,"HonorCooldown":false}'
         RetryPolicy:
           MaximumEventAgeInSeconds: 3600
           MaximumRetryAttempts: 3
 
 Outputs:
   OpenInferenceStack:
-    Description: Open the ready model. Sign in as admin with the password you chose.
-    Value: !Sub https://${Distribution.DomainName}/#model/Qwen%2FQwen3-4B
+    Description: Sign in with the password you chose. Start with 0 models and 0 GPUs; add GPUs in the launcher.
+    Value: !Sub https://${Distribution.DomainName}/
   ManageMachine:
-    Description: Start or stop this machine. Stopping ends compute charges; storage charges continue.
+    Description: Manage the CPU launcher. It continues to run when GPU machines are removed.
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/ec2/home?region=${AWS::Region}#InstanceDetails:instanceId=${Machine}
   DeleteInstallation:
-    Description: Delete this CloudFormation stack to remove the machine and its stored data.
+    Description: Delete this stack to remove all machines, disks, services and stored data.
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudformation/home?region=${AWS::Region}#/stacks/stackinfo?stackId=${AWS::StackId}

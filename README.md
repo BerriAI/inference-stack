@@ -27,18 +27,18 @@ Use [Docker Compose](docs/setup.md#docker-compose) on one machine, or [Kubernete
 ### Docker Compose
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.2/install.sh | bash -s -- docker
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.2.0/install.sh | bash -s -- docker
 ```
 
 ### Kubernetes
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.2/install.sh | bash -s -- kubernetes
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.2.0/install.sh | bash -s -- kubernetes
 ```
 
 Open [localhost:8080](http://localhost:8080) and sign in as `admin`. The installer tells you where to find the generated password.
 
-**vLLM → choose a model → Deploy → Open LiteLLM → Playground.** Sign in to LiteLLM with the same password, select your model, and send a prompt.
+**Deployments → choose a model → Deploy → Try in LiteLLM.** Sign in to LiteLLM with the same password, select your model, and send a prompt.
 
 No GPU? Enable **Simulate without a GPU** in the model's **Settings** for canned responses.
 
@@ -54,7 +54,7 @@ Runs models from Hugging Face on your GPUs.
 
 ### LiteLLM
 
-Routes requests to your models and manages API keys, teams, and budgets.
+Manage models and send requests through one API or the Playground.
 
 <img src="assets/litellm.png" alt="LiteLLM Playground sending a request to a locally deployed simulated model" width="100%">
 

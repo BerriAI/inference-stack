@@ -22,11 +22,13 @@ from pydantic import BaseModel, Field, field_validator
 
 import catalog
 import compose_backend
+import diagnostics
 import kubernetes_backend as kubernetes
 import litellm_client
 import settings
 
 operation_lock = threading.Lock()
+cancel_deployment = threading.Event()
 deployment = {"action": "", "name": "", "step": "", "error": "", "request": None}
 STATE_FILE = Path(settings.STATE_DIR) / "deployment.json"
 SESSION_COOKIE = "inference_stack_session"
@@ -53,6 +55,8 @@ class AddModel(BaseModel):
     context: int = Field(default=4096, ge=512, le=131072)
     simulate: bool = False
     replace_existing: bool = False
+    add_gpu: bool = False
+    expected_capacity: int | None = Field(default=None, ge=0, le=4)
 
     _valid_model = field_validator("model")(catalog.valid_id)
 
@@ -78,6 +82,7 @@ def set_deployment(**values) -> None:
 
 @asynccontextmanager
 async def lifespan(app):
+    catalog.restore_token()
     if STATE_FILE.exists():
         try:
             deployment.update(json.loads(STATE_FILE.read_text()))
@@ -184,6 +189,60 @@ def machine_info() -> dict | None:
         return {"provider": "aws"}
 
 
+def capacity_request(method="GET", path="/", body=None):
+    if not settings.AWS_CAPACITY_SOCKET:
+        raise HTTPException(404, "GPU provisioning is available on AWS installations.")
+    try:
+        with httpx.Client(transport=httpx.HTTPTransport(uds=settings.AWS_CAPACITY_SOCKET), timeout=120) as client:
+            response = client.request(method, "http://localhost" + path, json=body)
+        if response.is_error:
+            raise HTTPException(response.status_code, response.json()["detail"])
+        return response.json()
+    except (httpx.HTTPError, ValueError, KeyError):
+        raise HTTPException(503, "Could not reach AWS capacity management. Refresh or check this installation in AWS.") from None
+
+
+@lru_cache(maxsize=2)
+def capacity_status(bucket):
+    if not settings.AWS_CAPACITY_SOCKET:
+        return None
+    try:
+        return capacity_request()
+    except HTTPException as error:
+        return {"error": error.detail}
+
+
+class GPUCapacity(BaseModel):
+    expected: int = Field(ge=0, le=4)
+    desired: int = Field(ge=0, le=4)
+
+
+@app.post("/api/gpus")
+def resize_gpus(body: GPUCapacity):
+    if not operation_lock.acquire(blocking=False):
+        raise HTTPException(409, "Wait for the current deployment or GPU change to finish.")
+    try:
+        return capacity_request("POST", body=body.model_dump())
+    finally:
+        capacity_status.cache_clear()
+        inventory.cache_clear()
+        operation_lock.release()
+
+
+@app.delete("/api/gpus/{instance}")
+def remove_gpu(instance: str):
+    if not re.fullmatch(r"i-[a-f0-9]{8,17}", instance):
+        raise HTTPException(422, "Invalid GPU machine.")
+    if not operation_lock.acquire(blocking=False):
+        raise HTTPException(409, "Wait for the current deployment or GPU change to finish.")
+    try:
+        return capacity_request("POST", "/remove", {"id": instance})
+    finally:
+        capacity_status.cache_clear()
+        inventory.cache_clear()
+        operation_lock.release()
+
+
 def model_servers(registered: list[dict] | None = None) -> list[dict]:
     if settings.MODE == "kubernetes":
         return kubernetes.models(registered)
@@ -221,8 +280,10 @@ def status() -> dict:
             row["name"] = match["name"]
         row["status"] = "ready" if match and row["ready"] == row["replicas"] and row["router_ready"] else "starting"
     components["router"] = {"healthy": all(r["router_ready"] for r in rows) if settings.MODE == "kubernetes" else is_healthy(settings.ROUTER_HEALTH_URL)}
-    return {"mode": settings.MODE, "hardware": gpu_inventory(), "machine": machine_info(), "permissions": permissions,
-            "models": rows, "deployment": dict(deployment), "components": components, "errors": errors}
+    return {"mode": settings.MODE, "hardware": gpu_inventory(), "machine": machine_info(),
+            "capacity": capacity_status(int(time.monotonic() // 10)), "permissions": permissions,
+            "models": rows, "deployment": dict(deployment), "components": components, "errors": errors,
+            "api_base": settings.LITELLM_PUBLIC_URL + "/v1"}
 
 
 @app.get("/api/catalog")
@@ -247,12 +308,14 @@ def model_details(model: str) -> dict:
         raise HTTPException(502, "Could not reach Hugging Face. Retry the model check.")
     devices = gpu_inventory()["devices"]
     memory = max((d["memory_gb"] or 0 for d in devices), default=0)
+    if not memory and settings.AWS_CAPACITY_SOCKET:
+        memory = capacity_status(int(time.monotonic() // 10)).get("memory_gb", 0)
     info["suggested_gpus"] = min(8, max(1, math.ceil((info["estimated_gb"] or 0) / memory))) if memory else 1
     info["suggested_context"] = min(4096, info.get("max_context") or 4096)
     return info
 
 
-def validate_allocation(request: AddModel) -> None:
+def validate_allocation(request: AddModel, adding_gpu: bool = False) -> None:
     if request.simulate:
         return
     info = model_details(request.model)
@@ -261,8 +324,18 @@ def validate_allocation(request: AddModel) -> None:
     if info.get("max_context") and request.context > info["max_context"]:
         raise HTTPException(422, f"This model supports a context of up to {info['max_context']} tokens.")
     hardware = kubernetes.gpu_inventory(public_name(request.model)) if settings.MODE == "kubernetes" else gpu_inventory()
+    if adding_gpu:
+        capacity = capacity_request()
+        if request.replicas != 1 or request.gpus_per_replica != 1:
+            raise HTTPException(422, "This AWS GPU has one device. Deploy one replica on it, or add capacity from GPUs first.")
+        if info.get("estimated_gb") and info["estimated_gb"] > capacity["memory_gb"]:
+            raise HTTPException(422, "This model is estimated to need more memory than the available AWS GPU. Choose a smaller model.")
+        if capacity.get("error"):
+            raise HTTPException(409, capacity["error"])
+        return
     if hardware["count"] == 0:
-        raise HTTPException(422, "No GPU is available. Check the NVIDIA driver and device plugin, or use simulation in Settings.")
+        raise HTTPException(422, "No GPU is available. Add a GPU from the home page." if settings.AWS_CAPACITY_SOCKET else
+                            "No GPU is available. Check the NVIDIA driver and device plugin, or use simulation in Settings.")
     if hardware["count"] is None:
         # Kubernetes still enforces resource requests when inventory reads are unavailable.
         if settings.MODE == "compose":
@@ -282,8 +355,24 @@ def validate_allocation(request: AddModel) -> None:
 
 def deploy_model(request: AddModel, name: str) -> None:
     try:
+        if request.add_gpu:
+            set_deployment(step="Starting GPU")
+            deadline = time.monotonic() + 1800
+            while time.monotonic() < deadline:
+                if cancel_deployment.is_set():
+                    raise HTTPException(409, "Deployment cancelled. Check GPUs to remove any rented capacity and stop its charges.")
+                capacity = capacity_request()
+                if capacity.get("error"):
+                    raise HTTPException(409, capacity["error"] + " Check GPUs to cancel pending capacity.")
+                hardware = kubernetes.gpu_inventory(name)
+                if any(d["available"] for d in hardware["devices"]):
+                    break
+                cancel_deployment.wait(5)
+            else:
+                raise HTTPException(409, "The GPU did not become ready. Check GPUs to inspect or remove the machine, then retry.")
+            validate_allocation(request)
         if settings.MODE == "kubernetes":
-            set_deployment(step="Starting vLLM and llm-d. Waiting for model readiness")
+            set_deployment(step="Downloading and starting model")
             kubernetes.deploy(request, name)
         else:
             set_deployment(step="Downloading the model server image")
@@ -301,9 +390,14 @@ def deploy_model(request: AddModel, name: str) -> None:
             compose_backend.publish_endpoints()
             set_deployment(step="Registering with LiteLLM")
             litellm_client.register_model(name, request.model, f"{settings.ROUTER_URL}/v1")
+        set_deployment(step="Checking LiteLLM connection")
+        if not any(row["name"] == name and row["served_model"] == request.model for row in litellm_client.list_models()):
+            raise RuntimeError("Model registration is missing")
         set_deployment(step="", error="")
+    except HTTPException as error:
+        set_deployment(step="", error=error.detail)
     except Exception:
-        set_deployment(step="", error=f"{deployment['step']} failed. Check the model server and image availability, then retry. Your settings are saved.")
+        set_deployment(step="", error=f"{deployment['step']} failed. Open Logs for the cause, then retry. Your settings are saved.")
     finally:
         inventory.cache_clear()
         operation_lock.release()
@@ -314,7 +408,9 @@ def add_model(request: AddModel, background: BackgroundTasks) -> dict:
     if not operation_lock.acquire(blocking=False):
         raise HTTPException(409, "An operation is already running. Wait for it to finish.")
     try:
-        validate_allocation(request)
+        if request.add_gpu and (not settings.AWS_CAPACITY_SOCKET or request.simulate or request.expected_capacity is None):
+            raise HTTPException(422, "Review AWS capacity and its price before adding a GPU.")
+        validate_allocation(request, adding_gpu=request.add_gpu)
         name = public_name(request.model)
         if settings.MODE == "kubernetes" and not kubernetes.permissions()["deploy"]:
             command = kubernetes.command(request, name)
@@ -324,6 +420,10 @@ def add_model(request: AddModel, background: BackgroundTasks) -> dict:
             previous = compose_backend.running_model()
             if previous and previous["served_model"] != request.model and not request.replace_existing:
                 raise HTTPException(409, "This machine runs one model at a time. Confirm replacement to continue.")
+        if request.add_gpu:
+            capacity_request("POST", body={"expected": request.expected_capacity, "desired": request.expected_capacity + 1})
+            capacity_status.cache_clear()
+        cancel_deployment.clear()
         set_deployment(action="deploy", name=name, step="Preparing deployment", error="", request=request.model_dump())
         background.add_task(deploy_model, request, name)
     except HTTPException:
@@ -334,6 +434,42 @@ def add_model(request: AddModel, background: BackgroundTasks) -> dict:
         raise HTTPException(503, "Could not start deployment. Check installation access, then retry.")
     else:
         return {"name": name}
+
+
+@app.post("/api/deployment/cancel")
+def cancel_pending_deployment():
+    if deployment["step"] != "Starting GPU":
+        raise HTTPException(409, "The model has started deploying. Use its logs to check progress, then remove the deployment if needed.")
+    cancel_deployment.set()
+    return {"status": "cancelling"}
+
+
+class HuggingFaceToken(BaseModel):
+    token: str = Field(min_length=8, max_length=1024)
+
+
+@app.post("/api/huggingface")
+def save_huggingface_token(body: HuggingFaceToken):
+    if not operation_lock.acquire(blocking=False):
+        raise HTTPException(409, "Wait for the current operation to finish.")
+    try:
+        catalog.save_token(body.token)
+        return {"status": "saved"}
+    except (httpx.HTTPError, OSError, RuntimeError):
+        raise HTTPException(422, "Could not save this Hugging Face token. Check that it has read access and that the launcher can save credentials.") from None
+    finally:
+        operation_lock.release()
+
+
+@app.get("/api/models/{name}/diagnostics")
+def model_diagnostics(name: str):
+    try:
+        row = managed_model(name)
+    except HTTPException as error:
+        if error.status_code != 404 or deployment["name"] != name or not deployment["request"]:
+            raise
+        row = {**deployment["request"], "served_model": deployment["request"]["model"], "name": name}
+    return diagnostics.inspect(row)
 
 
 def managed_model(name: str) -> dict:
@@ -358,7 +494,7 @@ def remove_model(name: str, background: BackgroundTasks) -> dict:
     try:
         model = managed_model(name)
     except HTTPException as error:
-        if error.status_code != 404 or deployment.get("action") != "remove" or deployment["name"] != name:
+        if error.status_code != 404 or deployment.get("action") not in ("deploy", "remove") or deployment["name"] != name:
             raise
         model = None
     if settings.MODE == "kubernetes" and not kubernetes.permissions()["deploy"]:

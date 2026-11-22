@@ -18,7 +18,7 @@ import settings
 SERVICE_ACCOUNT = Path("/var/run/secrets/kubernetes.io/serviceaccount")
 
 
-def api(method: str, path: str, **kwargs) -> dict:
+def api(method: str, path: str, raw=False, **kwargs):
     context = ssl.create_default_context(cafile=str(SERVICE_ACCOUNT / "ca.crt"))
     # Read the projected token for each request so rotation works.
     token = (SERVICE_ACCOUNT / "token").read_text().strip()
@@ -26,7 +26,8 @@ def api(method: str, path: str, **kwargs) -> dict:
     port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
     with httpx.Client(base_url=f"https://{host}:{port}", verify=context, timeout=10,
                       headers={"Authorization": f"Bearer {token}"}) as client:
-        return client.request(method, path, **kwargs).raise_for_status().json()
+        response = client.request(method, path, **kwargs).raise_for_status()
+        return response.text if raw else response.json()
 
 
 def resource_path(resource: str, group: str = "") -> str:
@@ -176,7 +177,7 @@ def values(request, name: str) -> dict:
 
 def command(request, name: str) -> str:
     args = ["helm", "upgrade", "--install", name, settings.HELM_MODEL_CHART,
-            "--namespace", settings.HELM_NAMESPACE, "--wait", "--timeout", "60m"]
+            "--namespace", settings.HELM_NAMESPACE, "--reuse-values", "--wait", "--timeout", "60m"]
     for key, value in values(request, name).items():
         args += ["--set-json", f"{key}={json.dumps(value, separators=(',', ':'))}"]
     return f"helm dependency build {shlex.quote(settings.HELM_MODEL_CHART)}\n" + shlex.join(args)
@@ -193,7 +194,7 @@ def helm(args: list[str], values_input: dict | None = None) -> str:
 
 
 def deploy(request, name: str) -> None:
-    helm(["upgrade", "--install", name, settings.BUNDLED_MODEL_CHART, "--values", "-",
+    helm(["upgrade", "--install", name, settings.BUNDLED_MODEL_CHART, "--reuse-values", "--values", "-",
           "--wait", "--timeout", "60m", "--history-max", "5"], values(request, name))
 
 

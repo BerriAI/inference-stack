@@ -1,22 +1,22 @@
 # Run Inference Stack
 
-Deploy a Hugging Face model with vLLM. LiteLLM sends requests to the model you choose and manages keys, teams, and budgets. llm-d selects a replica using cache and queue signals; Grafana shows metrics collected by Prometheus.
+Deploy a Hugging Face model with vLLM. LiteLLM lets you manage models and send requests through one API or the Playground. llm-d selects a replica using cache and queue signals; Grafana shows metrics collected by Prometheus.
 
-[Docker Compose](#docker-compose) · [Kubernetes](#kubernetes) · [Your first request](#your-first-request) · [Configuration](#configuration) · [Update](#update) · [Recovery and cleanup](#recovery-and-cleanup) · [Development](#development)
+[Docker Compose](#docker-compose) · [Kubernetes](#kubernetes) · [AWS](#aws) · [Your first request](#your-first-request) · [Configuration](#configuration) · [Update](#update) · [Recovery and cleanup](#recovery-and-cleanup) · [Development](#development)
 
 ## Docker Compose
 
 Use this path for one machine. You need Docker with Compose, curl, and OpenSSL. Real models also need an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). You can try the flow without a GPU using simulation.
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.2/install.sh | bash -s -- docker
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.2.0/install.sh | bash -s -- docker
 ```
 
 The installer verifies the release bundle, extracts it into `./inference-stack`, generates a private `compose/.env`, and starts the prebuilt stack. To choose another directory, export `INFERENCE_STACK_DIR` before running it. An existing installation and its credentials are reused.
 
 Open [the launcher](http://localhost:8080). Sign in as `admin` with the `LITELLM_MASTER_KEY` from `inference-stack/compose/.env`, then [deploy a model and send a request](#your-first-request).
 
-Keep `.env` for future starts; the database retains its password. Blank, short, and known example passwords are rejected. Compose runs one model at a time. **Replace model** downloads the server image, then stops the previous model before starting its replacement.
+Keep `.env` for future starts; the database retains its password. Blank, short, and known example passwords are rejected. Compose runs one model at a time. **Replace deployment** downloads the server image, then stops the previous model before starting its replacement.
 
 All published ports bind to `127.0.0.1`. The launcher controls Docker, so keep local access or put it behind an HTTPS reverse proxy with your organization's access controls.
 
@@ -25,7 +25,7 @@ All published ports bind to `127.0.0.1`. The launcher controls Docker, so keep l
 Use this path for a cluster. You need Helm, `kubectl`, curl, OpenSSL, and permission to install the stack's resources. Confirm that `kubectl config current-context` selects the intended cluster. Real models need GPU nodes with the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html). Simulation does not require GPUs.
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.2/install.sh | bash -s -- kubernetes
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.2.0/install.sh | bash -s -- kubernetes
 ```
 
 The installer verifies and extracts the release into `./inference-stack`, installs the stack in namespace `inference` with generated credentials, waits for readiness, and forwards the launcher, LiteLLM, and Grafana to localhost. Leave the terminal open; Ctrl-C closes these connections while the stack keeps running. Running the command again reconnects to an existing healthy release without changing its values.
@@ -38,33 +38,39 @@ Use a dedicated namespace: the launcher has deployment access there, including a
 
 ## AWS
 
-The AWS launch flow is in development and is not included in v0.1.2. The website button stays disabled until a released template passes the full GPU and browser checks.
+AWS installs the stack in your own account. You need permission to create the resources in the launch template; AWS bills your account directly.
 
-The template in `aws/stack.yaml` creates one `g5.2xlarge` in US East (Ohio): an NVIDIA A10G with 24 GB of GPU memory, a 200 GB encrypted disk, HTTPS access, and Qwen3-4B. It uses Docker Compose; no Kubernetes cluster is required. Model weights download from Hugging Face without an account.
+The template in `aws/stack.yaml` starts with **0 models and 0 GPUs**. It creates a `t3.large` CPU machine in US East (Ohio) for the launcher, LiteLLM, Grafana, and a small Kubernetes cluster. Add GPU machines from the launcher when you need them.
 
-The intended release flow is:
+To start:
 
 1. Choose **AWS → Launch on AWS** on the website. Sign into the AWS account that will own and pay for the installation.
-2. Choose an admin password, review the template, acknowledge the IAM permissions, and choose **Create stack**. The default stop time is four hours.
+2. Choose an admin password, review the cost and IAM permissions, and choose **Create stack**.
 3. Wait for `CREATE_COMPLETE`, then open **Outputs → OpenInferenceStack**. Sign in with your chosen password.
-4. On the ready model, choose **Open LiteLLM**. Sign in as `admin` with the same password, choose the model in Playground, and send a message.
+4. Open **Deployments**, choose a model, and review its GPU allocation. If capacity is needed, review the price and choose **Add GPU and deploy**. You can also add GPUs separately from **GPUs**.
+5. Wait for the GPU and model to become ready. Leave the page and return while setup continues; progress is retained.
+6. When the model is **Ready**, choose **Try in LiteLLM**. Sign in as `admin` with the same password, choose the model in Playground, and send a message.
 
-Compute costs $1.212/hour in Ohio, plus disk, public IPv4, network, and other AWS charges. An account needs at least 8 **Running On-Demand G and VT instances** vCPUs in its Ohio EC2 quota. The template checks this before creating a GPU machine. A sufficient quota does not guarantee instance capacity; AWS may still reject the launch when capacity is unavailable.
+The launcher costs $0.0832/hour for compute and has a 40 GB disk. Each GPU is a `g5.2xlarge` with one NVIDIA A10G (24 GB), a 200 GB disk, and $1.212/hour compute. Disk, public IPv4, network, and other AWS charges are additional. The launcher keeps running when there are no GPUs.
 
-**Stopping and returning:** open the GPU details from a model page, then choose **Manage in AWS**. Stop or start the instance there. The stop timer runs again on each boot. Keep the same Inference Stack URL for your next visit; allow the services and model time to restart. Stopping compute preserves the disk and its charges. Removing a model does not stop compute.
+**GPU quota:** each GPU needs 8 **Running On-Demand G and VT instances** vCPUs in the Ohio EC2 quota. The launcher checks this before adding capacity. A new account may need a quota increase through AWS Service Quotas. Approval does not guarantee available machines; a failed launch appears on the GPUs page and can be cancelled.
 
-**Removing everything:** choose **Delete installation**, then delete the CloudFormation stack in AWS. This deletes the instance and its disk, including downloaded models and the database. Check that deletion finishes; if AWS reports `DELETE_FAILED`, resolve the named resource and retry deletion.
+**Removing GPUs:** open **GPUs**, remove any models using the machine, then choose **Remove**. Its compute and disk charges end once AWS finishes termination. Removing a model alone does not remove its GPU.
+
+**Automatic removal:** GPU machines and their disks are removed four hours after the first GPU is added by default. Adding another GPU keeps that deadline. Running models stop at the deadline; the launcher and model configurations remain. Add capacity again to resume them. You can choose a different duration in the AWS template before installation.
+
+**Removing everything:** on **GPUs**, choose **Delete installation**, then delete the CloudFormation stack in AWS. This removes the CPU machine, GPU machines, disks, database, and access configuration. Check that deletion finishes; if AWS reports `DELETE_FAILED`, resolve the named resource and retry deletion.
 
 If setup fails, read the failed event in CloudFormation. For a quota error, request an increase in AWS Service Quotas, then launch again after approval. For a bootstrap failure, inspect the instance with AWS Systems Manager. Do not put a key in a URL or open public SSH access. Keep the original password on an existing installation; changing only the CloudFormation password parameter does not rotate every service's stored credentials.
 
 ## Your first request
 
-1. Open **vLLM** in the launcher. Choose **Add model** if models are already deployed.
+1. Open **Deployments** in the launcher. Choose **Deploy a model** if deployments already exist.
 2. Search Hugging Face, select a model, and review its GPU allocation. Replicas and context length are optional under **Settings**. Without a GPU, enable **Simulate without a GPU (canned responses)** there.
 3. Click **Deploy**. Wait until the model page shows **Ready**.
-4. Choose **Open LiteLLM** and sign in as `admin` with the same admin key. Open **Playground**, select your model, enter a prompt, and send it.
+4. Choose **Try in LiteLLM** and sign in as `admin` with the same admin password. In Playground, select the API model name shown on the deployment page, enter a prompt, and send it.
 
-A response confirms the path from LiteLLM through llm-d to the model server. Simulation returns canned text; it does not validate a real model or GPU. To connect an application, create a virtual key in LiteLLM and use `http://localhost:4000/v1` as the OpenAI-compatible base URL from this machine.
+A response confirms the path from LiteLLM through llm-d to the model server. Simulation returns canned text; it does not validate a real model or GPU. To connect an application, create a virtual key in LiteLLM and copy the **API base** from the deployment page. Local Docker and port-forwarded Kubernetes addresses work from the same machine; configure a reachable HTTPS address for applications elsewhere.
 
 | Tool | Local address |
 | --- | --- |
@@ -72,7 +78,7 @@ A response confirms the path from LiteLLM through llm-d to the model server. Sim
 | LiteLLM | http://localhost:4000/ui |
 | Grafana | http://localhost:3000 |
 
-LiteLLM and Grafana open in new tabs. Use **llm-d → Settings** to adjust routing, and **Grafana** to inspect the stack overview.
+LiteLLM and Grafana open in new tabs. Use **Replica scheduling → Settings** to adjust inference scheduling, and **Grafana** to inspect the stack overview.
 
 ## Configuration
 
@@ -82,7 +88,7 @@ The default settings are enough for an ungated model that fits your GPUs. Use th
 
 The launcher searches the full Hugging Face catalogue and estimates GPU memory. Estimates are not a guarantee of [vLLM compatibility](https://docs.vllm.ai/en/stable/models/supported_models/). Each replica's GPUs must fit on one machine or Kubernetes node. Missing access, unsupported tasks, and known capacity blockers appear before deployment.
 
-Gated models require accepted model terms and a Hugging Face token with access:
+Gated models link to their Hugging Face terms and offer **Connect Hugging Face** on the deployment page. Accept the terms, then enter a read token. The launcher saves it server-side in a private state file (Docker) or a Kubernetes Secret. Existing configuration also remains supported:
 
 - **Compose:** add `HF_TOKEN` to your local `compose/.env`, then recreate the launcher from the `compose` directory:
 
@@ -127,13 +133,13 @@ To use a separate launcher password, set `LAUNCHER_PASSWORD` in the launcher's c
 
 ### Routing, teams, and fairness
 
-Routing works as soon as a model is deployed. Under **llm-d → Settings**, adjust prefix-cache and queue-depth weights for a model. Other scorers are preserved. Applying changes restarts the router and can briefly pause requests. Custom policies without these scorers stay managed through their existing configuration.
+Routing works as soon as a model is deployed. Under **Replica scheduling → Settings**, adjust prefix-cache and queue-depth weights for a model. Other scorers are preserved. Applying changes restarts the router and can briefly pause requests. Custom policies without these scorers stay managed through their existing configuration.
 
 Create teams and keys in LiteLLM. Requests carry the team's `x-llm-d-inference-fairness-id` header to llm-d, which can use it to share capacity between teams. See [the header callback](../charts/inference-stack/files/llmd_headers.py).
 
 ## Recovery and cleanup
 
-If deployment fails, the model page keeps your settings and offers **Retry deployment**. **Remove model** is also available for models that are not ready.
+If deployment fails, the model page keeps your settings and offers **Retry deployment**. Open **Logs** for the cause. **Advanced** shows the deployed configuration and commands for your installation. Cancelling while an AWS GPU starts cancels deployment; check **GPUs** to remove rented capacity and stop its charges. **Remove deployment** is also available for models that are not ready.
 
 For Compose, run these from the `compose` directory:
 
@@ -177,12 +183,12 @@ Database persistent volumes may remain; manage them separately according to your
 
 ## Update
 
-v0.1.2 fixes Kubernetes startup connections and includes the Deploy-button fix from v0.1.1. Keep your existing credentials and volumes.
+v0.2.0 adds deployment-first setup, AWS GPU provisioning, deployment logs, and native LiteLLM handoffs. Keep your existing credentials and volumes.
 
 For Docker, change this line in `inference-stack/compose/.env`:
 
 ```dotenv
-INFERENCE_STACK_LAUNCHER_IMAGE=ghcr.io/berriai/inference-stack/launcher:0.1.2
+INFERENCE_STACK_LAUNCHER_IMAGE=ghcr.io/berriai/inference-stack/launcher:0.2.0
 ```
 
 Then update the launcher:
@@ -192,13 +198,11 @@ cd inference-stack/compose
 docker compose up -d --no-build --pull always launcher
 ```
 
-For Kubernetes on v0.1.1, rerun the [setup command](#kubernetes) to reconnect with the fixed installer. No chart update is needed.
-
-For Kubernetes on v0.1.0, update the chart while retaining your values:
+For Kubernetes, update the chart while retaining your values:
 
 ```bash
-helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.1.2/inference-stack-0.1.2.tgz \
-  --namespace inference --reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.1.2 --wait
+helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.2.0/inference-stack-0.2.0.tgz \
+  --namespace inference --reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.2.0 --wait
 ```
 
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
@@ -211,8 +215,8 @@ Copy the prompt for your environment:
 <summary>Docker Compose</summary>
 
 ```text
-Set up Inference Stack v0.1.2 on this machine with Docker Compose.
-Read https://github.com/BerriAI/inference-stack/blob/v0.1.2/docs/setup.md
+Set up Inference Stack v0.2.0 on this machine with Docker Compose.
+Read https://github.com/BerriAI/inference-stack/blob/v0.2.0/docs/setup.md
 and inspect its release installer before running it. Check prerequisites,
 preserve any existing installation and credentials, and keep secrets out
 of chat and logs. Start the stack, verify its health, and open the launcher.
@@ -226,8 +230,8 @@ If no GPU is available, offer simulation and identify its canned response.
 <summary>Kubernetes</summary>
 
 ```text
-Set up Inference Stack v0.1.2 in Kubernetes.
-Read https://github.com/BerriAI/inference-stack/blob/v0.1.2/docs/setup.md
+Set up Inference Stack v0.2.0 in Kubernetes.
+Read https://github.com/BerriAI/inference-stack/blob/v0.2.0/docs/setup.md
 and inspect its release installer before running it. Confirm the current
 cluster is the intended target, check permissions and GPU capacity, and
 preserve existing releases and credentials. Keep secrets out of chat and

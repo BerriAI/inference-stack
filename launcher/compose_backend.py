@@ -21,7 +21,7 @@ def _docker() -> docker.DockerClient:
 
 
 def _model_servers() -> list:
-    return _docker().containers.list(all=True, filters={"label": f"{ROLE_LABEL}=model-server"})
+    return _docker().containers.list(all=True, filters={"label": f"{ROLE_LABEL}=model-server", "network": settings.DOCKER_NETWORK})
 
 
 def _address(container) -> str:
@@ -179,7 +179,7 @@ def routing_config() -> dict:
 
 def save_routing(config: dict) -> None:
     _write_atomically("epp-config.yaml", yaml.safe_dump(config))
-    containers = _docker().containers.list(filters={"label": ["com.docker.compose.project=inference-stack", "com.docker.compose.service=epp"]})
+    containers = _docker().containers.list(filters={"label": "com.docker.compose.service=epp", "network": settings.DOCKER_NETWORK})
     if len(containers) != 1:
         raise RuntimeError("Could not locate the llm-d router. Check Docker Compose, then retry.")
     containers[0].restart(timeout=10)

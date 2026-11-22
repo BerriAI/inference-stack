@@ -40,7 +40,7 @@ class BootstrapTests(unittest.TestCase):
     def archive(self, unsafe=False):
         output = io.BytesIO()
         with tarfile.open(fileobj=output, mode='w:gz') as archive:
-            for name, body in [('VERSION', b'1.2.3\n'), ('compose/docker-compose.yaml', b'services: {}')]:
+            for name, body in [('VERSION', b'1.2.3\n'), ('charts/inference-stack/Chart.yaml', b'name: inference-stack')]:
                 member = tarfile.TarInfo('inference-stack-1.2.3/' + name)
                 member.size = len(body)
                 archive.addfile(member, io.BytesIO(body))
@@ -78,19 +78,15 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_credentials_and_untrusted_host_do_not_enter_proxy_config(self):
-        override = yaml.safe_load(bootstrap.compose_override('https://example.cloudfront.net'))
-        self.assertEqual(override['services']['grafana']['environment']['GF_AUTH_ANONYMOUS_ENABLED'], 'false')
-        self.assertEqual(override['services']['litellm']['environment']['UI_PASSWORD'], '${APP_PASSWORD}')
+        credentials = {'masterkey': 'test-only-generated-masterkey', 'database': 'test-only-generated-database'}
+        values = bootstrap.chart_values('https://example.cloudfront.net', 'test-only-admin-password-0123456789', credentials)
+        self.assertFalse(values['grafana']['grafana.ini']['auth.anonymous']['enabled'])
+        self.assertEqual(values['litellm']['extraEnvVars'][0]['valueFrom']['secretKeyRef']['name'], 'inference-stack-admin')
+        self.assertTrue(values['launcher']['awsCapacity'])
         for host in ('https://example.com', 'https://example.cloudfront.net; bad', 'http://example.cloudfront.net'):
             with self.assertRaises(RuntimeError):
-                bootstrap.configure(host, 'test-only-admin-password-0123456789')
+                bootstrap.chart_values(host, 'test-only-admin-password-0123456789', credentials)
         self.assertFalse(self.root.exists())
-
-    def test_changed_password_cannot_silently_leave_old_password_active(self):
-        bootstrap.write(self.root / 'compose/.env', 'APP_PASSWORD=test-only-original-password-0123456789\n')
-        with self.assertRaisesRegex(RuntimeError, 'password changed'):
-            bootstrap.configure('https://example.cloudfront.net', 'test-only-replacement-password-0123456789')
-        self.assertIn('original', (self.root / 'compose/.env').read_text())
 
     def test_command_errors_hide_raw_output(self):
         with patch.object(bootstrap.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stdout='private-value', stderr='private-value')):
@@ -98,37 +94,14 @@ class BootstrapTests(unittest.TestCase):
                 bootstrap.run('example-tool', 'private-argument')
         self.assertNotIn('private-', str(error.exception))
 
-    def test_stop_deadline_refreshes_after_restart_and_respects_initial_schedule(self):
-        now = datetime.datetime(2026, 11, 22, 12, tzinfo=datetime.timezone.utc)
-        config = {'hours': 4, 'initial_stop_at': (now + datetime.timedelta(hours=2)).isoformat()}
-        bootstrap.write(self.root / 'aws/machine.json', json.dumps(config))
-        original_read = Path.read_text
+    def test_startup_waits_for_services_without_installing_any_model(self):
+        ready = {'models': [], 'components': {key: {'healthy': True} for key in ('litellm', 'router', 'grafana')}}
+        waiting = {**ready, 'components': {**ready['components'], 'litellm': {'healthy': False}}}
+        with patch.object(bootstrap, 'request', side_effect=[waiting, ready]) as request, patch.object(bootstrap.time, 'sleep'):
+            bootstrap.wait_for_services('localhost', 'test-only-password')
+        self.assertEqual(request.call_count, 2)
+        self.assertFalse(hasattr(bootstrap, 'starter_model'))
 
-        def read(path, *args, **kwargs):
-            return '3600 0' if str(path) == '/proc/uptime' else original_read(path, *args, **kwargs)
-
-        # Use a subclass so the timestamp parser and arithmetic stay real.
-        class Clock(datetime.datetime):
-            @classmethod
-            def now(cls, tz=None):
-                return now
-
-        with patch.object(Path, 'read_text', read), patch.object(bootstrap.datetime, 'datetime', Clock):
-            bootstrap.machine_info()
-            first = json.loads((self.root / 'compose/machine/info.json').read_text())
-            self.assertEqual(first['stop_at'], config['initial_stop_at'])
-            now += datetime.timedelta(days=1)
-            bootstrap.machine_info()
-            restarted = json.loads((self.root / 'compose/machine/info.json').read_text())
-            self.assertEqual(restarted['stop_at'], (now + datetime.timedelta(hours=3)).isoformat())
-
-    def test_starter_waits_for_services_and_reuses_ready_model(self):
-        ready = {'models': [{'served_model': bootstrap.MODEL, 'status': 'ready'}],
-                 'deployment': {'error': ''}, 'components': {'litellm': {'healthy': True}, 'router': {'healthy': True}}}
-        waiting = {**ready, 'components': {'litellm': {'healthy': False}, 'router': {'healthy': True}}}
-        with patch.object(bootstrap, 'request', side_effect=[waiting, ready, ready, ready]) as request, patch.object(bootstrap.time, 'sleep'):
-            bootstrap.starter_model('test-only-password', True)
-        self.assertTrue(all(call.args[0] == '/api/status' for call in request.call_args_list))
 
 
 class PrerequisiteTests(unittest.TestCase):
@@ -142,19 +115,21 @@ class PrerequisiteTests(unittest.TestCase):
         self.code = {}
         with patch.dict(sys.modules, boto3=fake_boto3):
             exec(TEMPLATE['Resources']['PrerequisiteFunction']['Properties']['Code']['ZipFile'], self.code)
-        self.properties = {'Operation': 'Prepare', 'Hours': '4', 'Simulate': 'false'}
+        self.properties = {'Operation': 'Prepare'}
 
     def test_zero_quota_explains_recovery_before_any_machine_is_created(self):
         with self.assertRaisesRegex(ValueError, 'Request an EC2 quota increase'):
             self.code['prepare'](self.properties)
         self.ec2.describe_instance_type_offerings.assert_not_called()
 
-    def test_enough_quota_selects_gpu_and_does_not_claim_capacity_is_reserved(self):
-        self.quotas.get_service_quota.return_value = {'Quota': {'Value': 8}}
+    def test_launcher_needs_only_standard_quota_and_starts_without_gpus(self):
+        self.quotas.get_service_quota.return_value = {'Quota': {'Value': 2}}
         result = self.code['prepare'](self.properties)
-        self.assertEqual(result['InstanceType'], 'g5.2xlarge')
+        self.assertEqual(result['InstanceType'], 't3.large')
+        self.quotas.get_service_quota.assert_called_once_with(ServiceCode='ec2', QuotaCode='L-1216C47A')
+        self.assertEqual(TEMPLATE['Resources']['GpuGroup']['Properties']['DesiredCapacity'], '0')
         self.assertEqual(result['Zone'], 'us-east-2a')
-        self.assertIn('StopAt', result)
+        self.assertEqual(TEMPLATE['Resources']['StopSchedule']['Properties']['State'], 'DISABLED')
 
     def test_wrong_region_fails_before_using_ohio_price(self):
         self.ec2.meta.region_name = 'us-west-2'
