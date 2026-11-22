@@ -27,13 +27,13 @@ Use [Docker Compose](docs/setup.md#docker-compose) on one machine, or [Kubernete
 ### Docker Compose
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.1/install.sh | bash -s -- docker
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.2/install.sh | bash -s -- docker
 ```
 
 ### Kubernetes
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.1/install.sh | bash -s -- kubernetes
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.2/install.sh | bash -s -- kubernetes
 ```
 
 Open [localhost:8080](http://localhost:8080) and sign in as `admin`. The installer tells you where to find the generated password.

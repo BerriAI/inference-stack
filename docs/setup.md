@@ -2,14 +2,14 @@
 
 Deploy a Hugging Face model with vLLM. LiteLLM sends requests to the model you choose and manages keys, teams, and budgets. llm-d selects a replica using cache and queue signals; Grafana shows metrics collected by Prometheus.
 
-[Docker Compose](#docker-compose) · [Kubernetes](#kubernetes) · [Your first request](#your-first-request) · [Configuration](#configuration) · [Update](#update-from-v010) · [Recovery and cleanup](#recovery-and-cleanup) · [Development](#development)
+[Docker Compose](#docker-compose) · [Kubernetes](#kubernetes) · [Your first request](#your-first-request) · [Configuration](#configuration) · [Update](#update) · [Recovery and cleanup](#recovery-and-cleanup) · [Development](#development)
 
 ## Docker Compose
 
 Use this path for one machine. You need Docker with Compose, curl, and OpenSSL. Real models also need an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). You can try the flow without a GPU using simulation.
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.1/install.sh | bash -s -- docker
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.2/install.sh | bash -s -- docker
 ```
 
 The installer verifies the release bundle, extracts it into `./inference-stack`, generates a private `compose/.env`, and starts the prebuilt stack. To choose another directory, export `INFERENCE_STACK_DIR` before running it. An existing installation and its credentials are reused.
@@ -25,7 +25,7 @@ All published ports bind to `127.0.0.1`. The launcher controls Docker, so keep l
 Use this path for a cluster. You need Helm, `kubectl`, curl, OpenSSL, and permission to install the stack's resources. Confirm that `kubectl config current-context` selects the intended cluster. Real models need GPU nodes with the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html). Simulation does not require GPUs.
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.1/install.sh | bash -s -- kubernetes
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.1.2/install.sh | bash -s -- kubernetes
 ```
 
 The installer verifies and extracts the release into `./inference-stack`, installs the stack in namespace `inference` with generated credentials, waits for readiness, and forwards the launcher, LiteLLM, and Grafana to localhost. Leave the terminal open; Ctrl-C closes these connections while the stack keeps running. Running the command again reconnects to an existing healthy release without changing its values.
@@ -154,14 +154,14 @@ helm uninstall inference-stack --namespace inference
 
 Database persistent volumes may remain; manage them separately according to your storage policy.
 
-## Update from v0.1.0
+## Update
 
-This patch fixes the Deploy button after changing model settings. Keep your existing credentials and volumes.
+v0.1.2 fixes Kubernetes startup connections and includes the Deploy-button fix from v0.1.1. Keep your existing credentials and volumes.
 
 For Docker, change this line in `inference-stack/compose/.env`:
 
 ```dotenv
-INFERENCE_STACK_LAUNCHER_IMAGE=ghcr.io/berriai/inference-stack/launcher:0.1.1
+INFERENCE_STACK_LAUNCHER_IMAGE=ghcr.io/berriai/inference-stack/launcher:0.1.2
 ```
 
 Then update the launcher:
@@ -171,14 +171,16 @@ cd inference-stack/compose
 docker compose up -d --no-build --pull always launcher
 ```
 
-For Kubernetes, update the chart while retaining your values:
+For Kubernetes on v0.1.1, rerun the [setup command](#kubernetes) to reconnect with the fixed installer. No chart update is needed.
+
+For Kubernetes on v0.1.0, update the chart while retaining your values:
 
 ```bash
-helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.1.1/inference-stack-0.1.1.tgz \
-  --namespace inference --reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.1.1 --wait
+helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.1.2/inference-stack-0.1.2.tgz \
+  --namespace inference --reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.1.2 --wait
 ```
 
-If port-forwarding disconnects, rerun the Kubernetes setup command to reconnect. Open the launcher, change a model setting, and confirm that **Deploy** works on the first click.
+After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
 
 ## Deploy with your agent
 
@@ -188,8 +190,8 @@ Copy the prompt for your environment:
 <summary>Docker Compose</summary>
 
 ```text
-Set up Inference Stack v0.1.1 on this machine with Docker Compose.
-Read https://github.com/BerriAI/inference-stack/blob/v0.1.1/docs/setup.md
+Set up Inference Stack v0.1.2 on this machine with Docker Compose.
+Read https://github.com/BerriAI/inference-stack/blob/v0.1.2/docs/setup.md
 and inspect its release installer before running it. Check prerequisites,
 preserve any existing installation and credentials, and keep secrets out
 of chat and logs. Start the stack, verify its health, and open the launcher.
@@ -203,8 +205,8 @@ If no GPU is available, offer simulation and identify its canned response.
 <summary>Kubernetes</summary>
 
 ```text
-Set up Inference Stack v0.1.1 in Kubernetes.
-Read https://github.com/BerriAI/inference-stack/blob/v0.1.1/docs/setup.md
+Set up Inference Stack v0.1.2 in Kubernetes.
+Read https://github.com/BerriAI/inference-stack/blob/v0.1.2/docs/setup.md
 and inspect its release installer before running it. Confirm the current
 cluster is the intended target, check permissions and GPU capacity, and
 preserve existing releases and credentials. Keep secrets out of chat and

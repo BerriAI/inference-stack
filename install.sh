@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=0.1.1
+VERSION=0.1.2
 RELEASE="https://github.com/BerriAI/inference-stack/releases/download/v$VERSION"
 mode="${1:-}"
 case "$mode" in
@@ -98,10 +98,18 @@ litellm:
       postgres-password: "$(openssl rand -hex 24)"
 VALUES
   fi
-  for mapping in inference-stack-launcher:8080:8080 inference-stack-litellm:4000:4000 inference-stack-grafana:3000:80; do
-    service="${mapping%%:*}"
+  # LiteLLM's Service also matches its migration Job. Only Deployment pods
+  # have pod-template-hash; forwarding to one avoids selecting the Job.
+  litellm_pods="$(kubectl get pods --namespace inference \
+    --selector 'app.kubernetes.io/instance=inference-stack,app.kubernetes.io/name=litellm,pod-template-hash' \
+    --field-selector status.phase=Running --output name)"
+  litellm_pod="${litellm_pods%%$'\n'*}"
+  [[ -n "$litellm_pod" ]] || { printf 'No running LiteLLM proxy pod found. Check kubectl get pods -n inference, then retry.\n' >&2; exit 1; }
+  kubectl wait --namespace inference --for=condition=Ready "$litellm_pod" --timeout=60s >/dev/null
+  for mapping in svc/inference-stack-launcher:8080:8080 "$litellm_pod:4000:4000" svc/inference-stack-grafana:3000:80; do
+    target="${mapping%%:*}"
     ports="${mapping#*:}"
-    kubectl port-forward --namespace inference "svc/$service" "$ports" >/dev/null 2>&1 &
+    kubectl port-forward --namespace inference "$target" "$ports" >/dev/null 2>&1 &
     forwards+=("$!")
   done
   sleep 2
