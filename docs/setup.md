@@ -38,18 +38,18 @@ Use a dedicated namespace: the launcher has deployment access there, including a
 
 ## AWS
 
-AWS installs the stack in your own account. You need permission to create the resources in the launch template; AWS bills your account directly.
+AWS installs the stack in your own account. You need a paid AWS account with permission to create the resources in the launch template; AWS bills your account directly.
 
 The template in `aws/stack.yaml` starts with **0 models and 0 GPUs**. It creates a `t3.large` CPU machine in US East (Ohio) for the launcher, LiteLLM, Grafana, and a small Kubernetes cluster. Add GPU machines from the launcher when you need them.
 
 To start:
 
-1. Choose **AWS → Launch on AWS** on the website. Sign into the AWS account that will own and pay for the installation.
-2. Choose an admin password, review the cost and IAM permissions, and choose **Create stack**.
-3. Wait for `CREATE_COMPLETE`, then open **Outputs → OpenInferenceStack**. Sign in with your chosen password.
+1. Open [Launch on AWS](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/create/review?templateURL=https%3A%2F%2Finference-stack-release-templates-templates-e0eqnr6ih8gk.s3.us-east-2.amazonaws.com%2Freleases%2Fv0.2.2%2Faws-stack.yaml&stackName=inference-stack). Sign into the AWS account that will own and pay for the installation.
+2. Enter an **Admin password** of at least 20 characters. Keep the other defaults, review the cost, acknowledge the IAM permissions, and choose **Create stack**.
+3. Wait for `CREATE_COMPLETE`, then open **Outputs → OpenInferenceStack**. Sign in as `admin` with that password. The homepage shows **0 deployments · 0 GPUs**.
 4. Open **Deployments**, choose a model, and review its GPU allocation. If capacity is needed, review the price and choose **Add GPU and deploy**. You can also add GPUs separately from **GPUs**.
 5. Wait for the GPU and model to become ready. Leave the page and return while setup continues; progress is retained.
-6. When the model is **Ready**, choose **Try in LiteLLM**. Sign in as `admin` with the same password, choose the model in Chat, and send a message.
+6. When the model is **Ready**, choose **Try in LiteLLM**. Sign in as `admin` with the same password. In **Chat**, select the API model name shown on the deployment page and send a message. A model response confirms your first request.
 
 The launcher costs $0.0832/hour for compute and has a 40 GB disk. Each GPU is a `g5.2xlarge` with one NVIDIA A10G (24 GB), a 200 GB disk, and $1.212/hour compute. Disk, public IPv4, network, and other AWS charges are additional. The launcher keeps running when there are no GPUs.
 
