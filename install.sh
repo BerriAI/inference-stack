@@ -83,9 +83,11 @@ migrate_grafana_data() {
       tar -xof - -C "$stage" --exclude=./dashboards --exclude=./.inference-stack-migrated-from
       if [ "$retry" = true ]; then
         find "$data" -mindepth 1 -maxdepth 1 ! -name dashboards ! -name "${marker##*/}" -exec rm -rf -- {} +
+      elif ! printf "%s\n" "$1" > "$marker"; then
+        rm -f "$marker"
+        exit 1
       fi
       cp -a "$stage/." "$data/"
-      printf "%s\n" "$1" > "$marker"
     ' migrate-grafana "$container" < "$archive"; then
     printf 'Grafana data migrated to its Compose volume.\n'
   else

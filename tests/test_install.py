@@ -166,6 +166,29 @@ esac
         self.assertFalse((volume / 'plugins/old-plugin').exists())
         self.assertTrue((volume / 'dashboards').is_dir())
 
+    def test_grafana_retry_after_partial_copy(self):
+        source, volume = self.grafana_migration()
+        (source / 'grafana.db').write_text('complete database')
+        self.archive_grafana(source)
+        self.tool('cp', '''if [ "${GRAFANA_VOLUME_FULL:-}" = yes ] && [ "$1" = -a ]; then
+  printf 'partial database' > "${3}grafana.db"
+  printf 'No space left on device\\n' >&2
+  exit 1
+fi
+exec /bin/cp "$@"
+''')
+        self.env['GRAFANA_VOLUME_FULL'] = 'yes'
+        result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('No space left on device', result.stderr)
+        self.assertIn('start legacy-grafana', self.log.read_text())
+        self.assertEqual((volume / 'grafana.db').read_text(), 'partial database')
+
+        del self.env['GRAFANA_VOLUME_FULL']
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((volume / 'grafana.db').read_text(), 'complete database')
+
     def test_upgrade_migrates_grafana_before_recreating_services(self):
         self.bundle()
         self.existing(version='0.3.1')
