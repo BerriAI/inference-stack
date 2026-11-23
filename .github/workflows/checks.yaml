@@ -23,7 +23,7 @@ jobs:
           NODE_PATH="$RUNNER_TEMP/browser-tests/node_modules" node --test tests/test_model_settings.cjs
       - uses: azure/setup-helm@v4
         with:
-          version: v3.17.3
+          version: v4.3.2
       - run: |
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
           helm repo add grafana https://grafana.github.io/helm-charts

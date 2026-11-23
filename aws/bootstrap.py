@@ -76,8 +76,8 @@ def install_bundle(version):
 
 K3S_VERSION = 'v1.37.2+k3s1'
 K3S_SHA256 = '265b3ee6a3198ef14033c63ef46cbb32370d83795199fb6d1b01f21575eddbda'
-HELM_VERSION = 'v3.19.0'
-HELM_SHA256 = 'a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496'
+HELM_VERSION = 'v4.3.2'
+HELM_SHA256 = 'd1c0278d46beab79582d7e50f5b3dc206944ba8e577cde618513fd07daa53983'
 
 
 def checked_download(url, digest):

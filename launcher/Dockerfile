@@ -1,4 +1,4 @@
-FROM alpine/helm:3.17.3 AS helm
+FROM alpine/helm:4.3.2@sha256:a3b9d617c0c30a6c488cebb429c4ba83995a26dc2184599af5fd408a361b2e67 AS helm
 FROM python:3.12-slim
 COPY --from=helm /usr/bin/helm /usr/local/bin/helm
 COPY charts/model /opt/charts/model
