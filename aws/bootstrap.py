@@ -76,8 +76,8 @@ def install_bundle(version):
 
 K3S_VERSION = 'v1.37.2+k3s1'
 K3S_SHA256 = '265b3ee6a3198ef14033c63ef46cbb32370d83795199fb6d1b01f21575eddbda'
-HELM_VERSION = 'v3.19.0'
-HELM_SHA256 = 'a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496'
+HELM_VERSION = 'v4.3.2'
+HELM_SHA256 = 'd1c0278d46beab79582d7e50f5b3dc206944ba8e577cde618513fd07daa53983'
 
 
 def checked_download(url, digest):
@@ -201,6 +201,10 @@ def chart_values(public_url, password, credentials):
     }
 
 
+def helm_is_v3():
+    return run('/usr/local/bin/helm', 'version', '--short').startswith('v3.')
+
+
 def configure_stack(public_url, password):
     path = Path('/etc/inference-stack/credentials.json')
     if not path.exists():
@@ -218,8 +222,9 @@ def configure_stack(public_url, password):
         if result.returncode:
             raise RuntimeError('Could not configure the installation credentials.')
     write('/etc/inference-stack/values.json', json.dumps(values))
+    helm_wait = '--wait' if helm_is_v3() else '--wait=legacy'
     run('/usr/local/bin/helm', 'upgrade', '--install', 'inference-stack', str(ROOT / 'charts/inference-stack'),
-        '-n', 'inference', '-f', '/etc/inference-stack/values.json', '--wait', '--timeout', '20m')
+        '-n', 'inference', '-f', '/etc/inference-stack/values.json', helm_wait, '--timeout', '20m')
     return configure_proxy(public_url)
 
 
@@ -252,8 +257,9 @@ def enable_lens():
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / 'lens.json'
         write(path, json.dumps(overrides))
+        rollback_flags = ('--atomic',) if helm_is_v3() else ('--rollback-on-failure', '--wait=legacy')
         run(*helm, 'upgrade', 'inference-stack', str(ROOT / 'charts/inference-stack'),
-            '-n', 'inference', '--reset-then-reuse-values', '-f', str(path), '--atomic', '--timeout', '20m')
+            '-n', 'inference', '--reset-then-reuse-values', '-f', str(path), *rollback_flags, '--timeout', '20m')
     configure_proxy(public_url)
 
 

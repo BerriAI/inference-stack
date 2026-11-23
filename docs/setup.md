@@ -24,6 +24,8 @@ All published ports bind to `127.0.0.1`. The launcher controls Docker, so keep l
 
 Use this path for a cluster. You need Helm 3.14 or later, `kubectl`, curl, OpenSSL, and permission to install the stack's resources. Confirm that `kubectl config current-context` selects the intended cluster. Real models need GPU nodes with the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html). Simulation does not require GPUs.
 
+The Helm 4 commands below use `--wait=legacy` so an expired LiteLLM migration Job doesn't make a healthy upgrade report failure. If you use Helm 3, replace `--wait=legacy` with `--wait`.
+
 ```bash
 curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.4.0/install.sh | bash -s -- kubernetes
 ```
@@ -123,7 +125,7 @@ After installation, switch to a command-only launcher without replacing its gene
 ```bash
 cd inference-stack
 helm upgrade inference-stack charts/inference-stack --namespace inference \
-  --reuse-values --set launcher.manageModels=false --wait
+  --reuse-values --set launcher.manageModels=false --wait=legacy
 ```
 
 Run generated model commands from the extracted installation's root with your cluster credentials. Keep the model page open or return to it to check readiness. When capacity is unknown, verify the allocation yourself; Kubernetes still enforces GPU resource requests.
@@ -174,7 +176,7 @@ After resolving the pod or storage failure, reuse the release's generated values
 
 ```bash
 cd inference-stack
-helm upgrade inference-stack charts/inference-stack --namespace inference --reuse-values --wait --timeout 10m
+helm upgrade inference-stack charts/inference-stack --namespace inference --reuse-values --wait=legacy --timeout 10m
 bash install.sh kubernetes
 ```
 
@@ -210,7 +212,7 @@ For an existing Kubernetes cluster, update the chart while retaining your values
 
 ```bash
 helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.4.0/inference-stack-0.4.0.tgz \
-  --namespace inference --reset-then-reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.4.0 --wait
+  --namespace inference --reset-then-reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.4.0 --wait=legacy
 ```
 
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.

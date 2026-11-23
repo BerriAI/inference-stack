@@ -71,7 +71,7 @@ class HelmUpgradeTests(unittest.TestCase):
 
                             def upgrade(args, values_input=None):
                                 # Readiness and registration are separate runtime checks. No fixture image runs.
-                                return run(["helm", *[a for a in args if a != "--wait"],
+                                return run(["helm", *[a for a in args if a != "--wait=legacy"],
                                             "--no-hooks", "--namespace", namespace], values_input)
 
                             with patch.object(app.kubernetes, "helm", side_effect=upgrade):
@@ -83,8 +83,8 @@ class HelmUpgradeTests(unittest.TestCase):
                                               "schedulingProfiles": [{"name": "default", "plugins": [{"pluginRef": "queue-scorer", "weight": 7}]}]}
                                     app.kubernetes.save_routing(name, policy)
                                 elif operation == "command":
-                                    args = shlex.split(app.kubernetes.command(request, name).splitlines()[1])
-                                    run([*[a for a in args if a != "--wait"], "--no-hooks"])
+                                    args = shlex.split(app.kubernetes.command(request, name).splitlines()[-1])
+                                    run([*[a for a in args if a != "$helm_wait"], "--no-hooks"])
                                 else:
                                     app.kubernetes.deploy(request, name)
 

@@ -180,10 +180,13 @@ def values(request, name: str) -> dict:
 
 def command(request, name: str) -> str:
     args = ["helm", "upgrade", "--install", name, settings.HELM_MODEL_CHART,
-            "--namespace", settings.HELM_NAMESPACE, "--reset-then-reuse-values", "--wait", "--timeout", "60m"]
+            "--namespace", settings.HELM_NAMESPACE, "--reset-then-reuse-values", "--timeout", "60m"]
     for key, value in values(request, name).items():
         args += ["--set-json", f"{key}={json.dumps(value, separators=(',', ':'))}"]
-    return f"helm dependency build {shlex.quote(settings.HELM_MODEL_CHART)}\n" + shlex.join(args)
+    return (f"helm dependency build {shlex.quote(settings.HELM_MODEL_CHART)}\n"
+            "helm_wait=--wait=legacy\n"
+            'case "$(helm version --short)" in v3.*) helm_wait=--wait;; esac\n'
+            f'{shlex.join(args)} "$helm_wait"')
 
 
 def helm(args: list[str], values_input: dict | None = None) -> str:
@@ -198,7 +201,7 @@ def helm(args: list[str], values_input: dict | None = None) -> str:
 
 def deploy(request, name: str) -> None:
     helm(["upgrade", "--install", name, settings.BUNDLED_MODEL_CHART, "--reset-then-reuse-values", "--values", "-",
-          "--wait", "--timeout", "60m", "--history-max", "5"], values(request, name))
+          "--wait=legacy", "--timeout", "60m", "--history-max", "5"], values(request, name))
 
 
 def remove(name: str) -> None:
@@ -213,5 +216,5 @@ def routing_config(name: str) -> dict:
 def save_routing(name: str, config: dict) -> None:
     # Apply current chart defaults, then saved overrides and the edited policy.
     helm(["upgrade", name, settings.BUNDLED_MODEL_CHART, "--reset-then-reuse-values", "--values", "-",
-          "--wait", "--timeout", "5m", "--history-max", "5"],
+          "--wait=legacy", "--timeout", "5m", "--history-max", "5"],
          {"llm-d-router-standalone": {"router": {"epp": {"pluginsConfig": config}}}})
