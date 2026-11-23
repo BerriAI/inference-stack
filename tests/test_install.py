@@ -29,7 +29,7 @@ class InstallerTests(unittest.TestCase):
                     'CALLS': str(self.log), 'INFERENCE_STACK_DIR': str(self.root / 'stack')}
         for name, body in {
             'docker': 'echo "$*" >> "$CALLS"\n',
-            'helm': 'echo "$*" >> "$CALLS"\ncase " $* " in *" --all "*) echo "unknown flag: --all" >&2; exit 1;; esac\nif [ "$1" = list ]; then\n [ "${HELM_DENIED:-}" != yes ] || exit 1\n [ "${HELM_EXISTS:-}" != yes ] || echo inference-stack\nfi\n',
+            'helm': 'echo "$*" >> "$CALLS"\ncase " $* " in *" --all "*) echo "unknown flag: --all" >&2; exit 1;; esac\nif [ "$1" = list ]; then\n [ "${HELM_DENIED:-}" != yes ] || exit 1\n [ "${HELM_EXISTS:-}" != yes ] || echo inference-stack\nelif [ "$1" = version ]; then\n echo "${HELM_VERSION:-v4.3.2}"\nfi\n',
             'kubectl': '''echo "$*" >> "$CALLS"
 if [ "$1" = get ] && [ "$2" = pods ]; then
   [ "${NO_PROXY_POD:-}" != yes ] || exit 0
@@ -358,6 +358,18 @@ exec /bin/cp "$@"
         self.env['HELM_DENIED'] = 'yes'
         self.assertNotEqual(self.run_install('kubernetes').returncode, 0)
         self.assertNotIn('install inference-stack', self.log.read_text())
+
+    def test_kubernetes_install_selects_wait_flag_for_helm_version(self):
+        self.checkout()
+        self.env['NO_PROXY_POD'] = 'yes'
+        for version, wait in [('v4.3.2+g8346aaa', '--wait=legacy'), ('v3.19.0+g3d8990f', '--wait')]:
+            with self.subTest(version=version):
+                self.env['HELM_VERSION'] = version
+                self.log.unlink(missing_ok=True)
+                result = self.run_install('kubernetes')
+                self.assertIn('No running LiteLLM proxy pod found', result.stderr)
+                install = next(line for line in self.log.read_text().splitlines() if line.startswith('install inference-stack '))
+                self.assertEqual([arg for arg in install.split() if arg.startswith('--wait')], [wait])
 
     def test_existing_helm_install_is_reused_and_forwards_stop(self):
         calls = self.run_kubernetes_forwards(expected=4)

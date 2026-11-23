@@ -169,8 +169,11 @@ else
       helm repo add grafana https://grafana.github.io/helm-charts
       helm dependency build charts/inference-stack
     fi
+    helm_version="$(helm version --short)"
+    helm_wait=--wait=legacy
+    if [[ "$helm_version" == v3.* ]]; then helm_wait=--wait; fi
     helm install inference-stack charts/inference-stack --namespace inference --create-namespace \
-      --wait --timeout 10m --values - <<VALUES
+      "$helm_wait" --timeout 10m --values - <<VALUES
 launcher:
   image: "$image"
 litellm:

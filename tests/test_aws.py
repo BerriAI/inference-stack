@@ -131,24 +131,31 @@ class BootstrapTests(unittest.TestCase):
 
     def test_existing_aws_install_upgrades_only_lens_values_and_reuses_its_own_chart(self):
         public_url = 'https://example.cloudfront.net'
-        def helm(*args):
-            if args[1] == 'get':
-                return json.dumps({'launcher': {'litellmPublicUrl': public_url + '/litellm'}})
-            self.assertEqual(args[:6], ('/usr/local/bin/helm', 'upgrade', 'inference-stack',
-                                      str(self.root / 'charts/inference-stack'), '-n', 'inference'))
-            self.assertIn('--reset-then-reuse-values', args)
-            self.assertIn('--atomic', args)
-            overrides = json.loads(Path(args[args.index('-f') + 1]).read_text())
-            self.assertEqual(set(overrides), {'lens', 'launcher'})
-            self.assertEqual(overrides['launcher'], {'lensPublicUrl': public_url})
-            self.assertEqual(overrides['lens'], bootstrap.lens_values(public_url)['lens'])
+        for version, flags in [('v3.19.0+g3d8990f', ('--atomic',)),
+                               ('v4.3.2+g8346aaa', ('--rollback-on-failure', '--wait=legacy'))]:
+            def helm(*args):
+                if args[1] == 'get':
+                    return json.dumps({'launcher': {'litellmPublicUrl': public_url + '/litellm'}})
+                if args[1] == 'version':
+                    self.assertEqual(args, ('/usr/local/bin/helm', 'version', '--short'))
+                    return version + '\n'
+                self.assertEqual(args[:6], ('/usr/local/bin/helm', 'upgrade', 'inference-stack',
+                                          str(self.root / 'charts/inference-stack'), '-n', 'inference'))
+                self.assertIn('--reset-then-reuse-values', args)
+                values_index = args.index('-f') + 1
+                self.assertEqual(args[values_index + 1:], (*flags, '--timeout', '20m'))
+                overrides = json.loads(Path(args[values_index]).read_text())
+                self.assertEqual(set(overrides), {'lens', 'launcher'})
+                self.assertEqual(overrides['launcher'], {'lensPublicUrl': public_url})
+                self.assertEqual(overrides['lens'], bootstrap.lens_values(public_url)['lens'])
 
-        with patch.dict(os.environ), patch.object(bootstrap, 'run', side_effect=helm) as run, \
-             patch.object(bootstrap, 'metadata', return_value='t3.xlarge'), \
-             patch.object(bootstrap, 'configure_proxy') as proxy:
-            bootstrap.enable_lens()
-        self.assertEqual(run.call_count, 2)
-        proxy.assert_called_once_with(public_url)
+            with self.subTest(version=version), patch.dict(os.environ), \
+                 patch.object(bootstrap, 'run', side_effect=helm) as run, \
+                 patch.object(bootstrap, 'metadata', return_value='t3.xlarge'), \
+                 patch.object(bootstrap, 'configure_proxy') as proxy:
+                bootstrap.enable_lens()
+                self.assertEqual(run.call_count, 3)
+                proxy.assert_called_once_with(public_url)
 
     def test_t3_large_lens_upgrade_persists_small_cpu_requests_without_overriding_custom_requests(self):
         public_url = 'https://example.cloudfront.net'
@@ -160,6 +167,8 @@ class BootstrapTests(unittest.TestCase):
                 def helm(*args):
                     if args[1] == 'get':
                         return json.dumps({'launcher': {'litellmPublicUrl': public_url + '/litellm'}, 'lens': saved_lens})
+                    if args[1] == 'version':
+                        return 'v4.3.2+g8346aaa\n'
                     lens = json.loads(Path(args[args.index('-f') + 1]).read_text())['lens']
                     self.assertEqual(lens['clickhouse']['resources'], {'requests': {'cpu': '50m'}})
                     self.assertEqual(lens.get('resources'), None if saved_cpu else {'requests': {'cpu': '50m'}})
@@ -175,6 +184,25 @@ class BootstrapTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as error:
                 bootstrap.run('example-tool', 'private-argument')
         self.assertNotIn('private-', str(error.exception))
+
+    def test_stack_upgrade_uses_legacy_wait_on_helm_4(self):
+        (self.root / 'etc/nginx/sites-enabled').mkdir(parents=True)
+        password = 'test-only-admin-password-0123456789'
+        credentials = self.root / 'etc/inference-stack/credentials.json'
+        credentials.parent.mkdir()
+        credentials.write_text(json.dumps({'masterkey': 'test-only-key', 'database': 'test-only-db', 'password': password}))
+        for version, wait in [('v4.3.2+g8346aaa\n', '--wait=legacy'), ('v3.19.0+g3d8990f\n', '--wait')]:
+            with self.subTest(version=version.strip()), \
+                 patch.object(bootstrap, 'Path', side_effect=lambda filename: self.root / str(filename).removeprefix('/')), \
+                 patch.object(bootstrap, 'write'), \
+                 patch.object(bootstrap.subprocess, 'run', return_value=SimpleNamespace(returncode=0)), \
+                 patch.object(bootstrap, 'kubectl', return_value='{"spec":{"clusterIP":"10.0.0.1"}}'), \
+                 patch.object(bootstrap, 'run', return_value=version) as run:
+                (self.root / 'etc/nginx/sites-enabled/inference-stack').unlink(missing_ok=True)
+                bootstrap.configure_stack('https://example.cloudfront.net', password)
+            run.assert_any_call('/usr/local/bin/helm', 'upgrade', '--install', 'inference-stack',
+                                str(self.root / 'charts/inference-stack'), '-n', 'inference', '-f',
+                                '/etc/inference-stack/values.json', wait, '--timeout', '20m')
 
     def test_startup_waits_for_services_without_installing_any_model(self):
         ready = {'models': [], 'components': {key: {'healthy': True} for key in ('litellm', 'router', 'grafana')}}

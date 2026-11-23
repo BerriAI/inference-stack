@@ -1,6 +1,7 @@
 import copy
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -210,10 +211,26 @@ class LauncherTests(unittest.TestCase):
         command = response.json()["command"]
         self.assertIn("helm dependency build", command)
         self.assertIn("--wait", command)
+        self.assertIn("--wait=legacy", command)
         self.assertIn("gpusPerReplica", command)
         deploy.assert_not_called()
         self.assertFalse(app.operation_lock.locked())
         self.assertFalse(app.deployment["step"])
+
+    def test_read_only_command_selects_wait_flag_for_helm_version(self):
+        command = app.kubernetes.command(app.AddModel(model="org/model", simulate=True), "test-release")
+        shell = """helm() {
+  case "$1" in
+    version) printf '%s\n' "$HELM_VERSION";;
+    upgrade) printf '%s\n' "$@";;
+  esac
+}
+"""
+        for version, wait in [("v4.3.2+g8346aaa", "--wait=legacy"), ("v3.19.0+g3d8990f", "--wait")]:
+            with self.subTest(version=version):
+                args = subprocess.check_output(["sh", "-eu", "-c", shell + command],
+                                               env={**os.environ, "HELM_VERSION": version}, text=True).splitlines()
+                self.assertEqual([arg for arg in args if arg.startswith("--wait")], [wait])
 
     def test_invalid_model_id_never_reaches_execution(self):
         with patch.object(app.compose_backend, "pull_image") as pull:
