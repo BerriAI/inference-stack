@@ -69,7 +69,7 @@ migrate_grafana_data() {
     docker compose run --no-deps --rm -T --entrypoint /bin/sh grafana -ec '
       data=/var/lib/grafana
       marker="$data/.inference-stack-migrated-from"
-      mountpoint -q "$data"
+      awk -v data="$data" '\''$5 == data { found = 1 } END { exit !found }'\'' /proc/self/mountinfo
       retry=false
       if [ -f "$marker" ] && [ "$(cat "$marker")" = "$1" ]; then
         retry=true

@@ -118,7 +118,7 @@ case "$1 ${2:-}" in
   "compose run")
     if [ -n "${GRAFANA_ARCHIVE:-}" ]; then
       shift 9
-      script=$(printf '%s' "$1" | sed 's|^      data=/var/lib/grafana$|      data="$GRAFANA_VOLUME"|')
+      script=$(printf '%s' "$1" | sed -e 's|^      data=/var/lib/grafana$|      data="$GRAFANA_VOLUME"|' -e 's|/proc/self/mountinfo|"$GRAFANA_MOUNTINFO"|')
       shift
       /bin/sh -ec "$script" "$@"
     else
@@ -138,8 +138,12 @@ esac
         volume.mkdir()
         (volume / 'plugins').mkdir()
         (volume / 'dashboards').mkdir()
-        self.env.update(GRAFANA_VOLUME=str(volume), GRAFANA_ARCHIVE=str(self.root / 'grafana.tar'))
-        self.tool('mountpoint', '[ "$1" = -q ] && [ "$2" = "$GRAFANA_VOLUME" ]\n')
+        mountinfo = self.root / 'mountinfo'
+        mountinfo.write_text(f'1 0 0:78 / / rw - overlay overlay rw\n'
+                             f'2 1 0:78 /volume {volume} rw - overlay overlay rw\n'
+                             f'3 2 0:78 /content {volume}/dashboards ro - overlay overlay rw\n')
+        self.env.update(GRAFANA_VOLUME=str(volume), GRAFANA_ARCHIVE=str(self.root / 'grafana.tar'),
+                        GRAFANA_MOUNTINFO=str(mountinfo))
         return source, volume
 
     def archive_grafana(self, source):
@@ -188,6 +192,18 @@ exec /bin/cp "$@"
         result = self.run_install()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((volume / 'grafana.db').read_text(), 'complete database')
+
+    def test_grafana_migration_refuses_a_missing_volume_with_a_dashboards_mount(self):
+        source, volume = self.grafana_migration()
+        (source / 'grafana.db').touch()
+        self.archive_grafana(source)
+        mountinfo = Path(self.env['GRAFANA_MOUNTINFO'])
+        parent, _, child = mountinfo.read_text().splitlines()
+        mountinfo.write_text(f'{parent}\n{child}\n')
+        result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('start legacy-grafana', self.log.read_text())
+        self.assertFalse((volume / 'grafana.db').exists())
 
     def test_upgrade_migrates_grafana_before_recreating_services(self):
         self.bundle()
