@@ -2,7 +2,7 @@ name: inference-stack
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:19.0
     entrypoint:
       - /bin/sh
       - -ec
@@ -20,11 +20,24 @@ services:
       POSTGRES_USER: litellm
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a generated password}
     volumes:
-      - postgres:/var/lib/postgresql/data
+      - database:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U litellm"]
       interval: 5s
       retries: 10
+
+  postgres-upgrade:
+    image: postgres:16
+    user: postgres
+    entrypoint: ["bash", "/upgrade-from-16.sh"]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a generated password}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - ./postgres/upgrade-from-16.sh:/upgrade-from-16.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   litellm:
     image: ghcr.io/berriai/litellm:main-stable
@@ -48,6 +61,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-upgrade:
+        condition: service_completed_successfully
 
   launcher:
     image: ${INFERENCE_STACK_LAUNCHER_IMAGE:-ghcr.io/berriai/inference-stack/launcher:0.4.0}
@@ -170,6 +185,7 @@ networks:
     internal: true
 
 volumes:
+  database:
   postgres:
   router-state:
   launcher-credentials:
