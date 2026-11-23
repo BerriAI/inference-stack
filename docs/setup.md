@@ -206,7 +206,7 @@ For an existing Kubernetes cluster, update the chart while retaining your values
 
 ```bash
 helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.4.0/inference-stack-0.4.0.tgz \
-  --namespace inference --reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.4.0 --wait
+  --namespace inference --reset-then-reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.4.0 --wait
 ```
 
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
