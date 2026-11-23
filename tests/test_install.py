@@ -88,6 +88,20 @@ fi
         self.assertIn('up -d --no-build --wait', self.log.read_text())
         self.assertNotIn(content.decode().splitlines()[0].split('=')[1], first.stdout)
 
+    def test_upgrade_adds_lens_credentials_without_replacing_existing_ones(self):
+        self.checkout()
+        env = self.root / 'compose/.env'
+        env.write_text('LITELLM_MASTER_KEY=sk-existing-key-0123456789abcdef\nPOSTGRES_PASSWORD=existing-password-0123456789\n')
+        env.chmod(0o600)
+        self.assertEqual(self.run_install().returncode, 0)
+        values = dict(line.split('=', 1) for line in env.read_text().splitlines())
+        self.assertEqual(values['LITELLM_MASTER_KEY'], 'sk-existing-key-0123456789abcdef')
+        self.assertEqual({len(values['LENS_ADMIN_TOKEN']), len(values['CLICKHOUSE_PASSWORD'])}, {64})
+        self.assertNotEqual(values['LENS_ADMIN_TOKEN'], values['CLICKHOUSE_PASSWORD'])
+        before = env.read_text()
+        self.assertEqual(self.run_install().returncode, 0)
+        self.assertEqual(before, env.read_text())
+
     def test_download_extracts_complete_bundle(self):
         self.bundle()
         result = self.run_install()
@@ -146,7 +160,7 @@ fi
         stack = self.existing(image='registry.example/launcher:custom')
         before = (stack / 'compose/.env').read_bytes()
         self.assertEqual(self.run_install().returncode, 0)
-        self.assertEqual((stack / 'compose/.env').read_bytes(), before)
+        self.assertTrue((stack / 'compose/.env').read_bytes().startswith(before))
 
     def test_upgrade_rewrites_old_pinned_image(self):
         self.bundle()
@@ -163,7 +177,7 @@ fi
                 self.assertEqual(self.run_install().returncode, 0)
                 self.assertEqual((stack / 'VERSION').read_text(), version + '\n')
                 self.assertEqual((stack / 'compose/docker-compose.yaml').read_text(), 'old recipe\n')
-                self.assertEqual((stack / 'compose/.env').read_bytes(), before)
+                self.assertTrue((stack / 'compose/.env').read_bytes().startswith(before))
                 shutil.rmtree(stack)
 
     def test_upgrade_backup_conflict_preserves_install(self):
@@ -205,7 +219,7 @@ fi
             self.assertEqual(process.returncode, 143, err)
             calls = self.log.read_text()
             self.assertNotIn('install inference-stack', calls)
-            self.assertEqual(calls.count('port-forward'), 3)
+            self.assertEqual(calls.count('port-forward'), 4)
             self.assertIn('port-forward --namespace inference pod/inference-stack-litellm-proxy 4000:4000', calls)
             self.assertIn('wait --namespace inference --for=condition=Ready pod/inference-stack-litellm-proxy', calls)
         finally:

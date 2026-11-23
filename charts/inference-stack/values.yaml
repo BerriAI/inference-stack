@@ -1,5 +1,5 @@
 launcher:
-  image: ghcr.io/berriai/inference-stack/launcher:0.3.1
+  image: ghcr.io/berriai/inference-stack/launcher:0.4.0
   imagePullPolicy: IfNotPresent
   # Namespace-scoped Helm deployment access. Disable for command-only use.
   manageModels: true
@@ -8,6 +8,7 @@ launcher:
   huggingFaceSecret: ""
   litellmPublicUrl: http://localhost:4000
   grafanaPublicUrl: http://localhost:3000
+  lensPublicUrl: http://localhost:4318
   # Chart reference printed in the "helm install" command for a new model.
   modelChart: charts/model
   nodeSelector: {}
@@ -42,6 +43,12 @@ litellm:
     - name: llmd-headers
       mountPath: /etc/litellm/llmd_headers.py
       subPath: llmd_headers.py
+
+lens:
+  enabled: true
+  fullnameOverride: inference-stack-lens
+  image:
+    digest: sha256:19da641d3ac3f2fa1f56bca9a5b895c1128c61ea31dc55e2cc2b9dfd7814112c
 
 prometheus:
   alertmanager:

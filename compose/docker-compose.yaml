@@ -50,7 +50,7 @@ services:
         condition: service_healthy
 
   launcher:
-    image: ${INFERENCE_STACK_LAUNCHER_IMAGE:-ghcr.io/berriai/inference-stack/launcher:0.3.1}
+    image: ${INFERENCE_STACK_LAUNCHER_IMAGE:-ghcr.io/berriai/inference-stack/launcher:0.4.0}
     build:
       context: ..
       dockerfile: launcher/Dockerfile
@@ -116,11 +116,60 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
 
+  lens:
+    image: ghcr.io/berriai/lens:0.4.0@sha256:19da641d3ac3f2fa1f56bca9a5b895c1128c61ea31dc55e2cc2b9dfd7814112c
+    environment:
+      LENS_MODE: standalone
+      LENS_PUBLIC_URL: ${LENS_PUBLIC_URL:-http://localhost:4318}
+      LENS_ADMIN_TOKEN: ${LENS_ADMIN_TOKEN:?Set LENS_ADMIN_TOKEN to a generated password}
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_USER: lens
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD to a generated password}
+      CLICKHOUSE_DATABASE: lens
+      AGENT_TRACING_RETENTION_DAYS: ${AGENT_TRACING_RETENTION_DAYS:-14}
+    ports:
+      - "127.0.0.1:4318:4318"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    networks: [default, storage]
+    mem_limit: 2g
+    pids_limit: 128
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1g
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.9.6.6@sha256:eb4870e7ca7ed70c259eebfcfbee6cf797017f6b5436c2926bbbfe3d4d28486e
+    environment:
+      CLICKHOUSE_USER: lens
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD to a generated password}
+      CLICKHOUSE_DB: lens
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse:/var/lib/clickhouse
+      - ./lens/keeper.xml:/etc/clickhouse-server/config.d/lens-keeper.xml:ro
+      - ./lens/logging.xml:/etc/clickhouse-server/config.d/lens-logging.xml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user lens --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1' >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    mem_limit: 4g
+    restart: unless-stopped
+    networks: [storage]
+
 networks:
   default:
     name: inference-stack
+  storage:
+    internal: true
 
 volumes:
   postgres:
   router-state:
   launcher-credentials:
+  clickhouse:
