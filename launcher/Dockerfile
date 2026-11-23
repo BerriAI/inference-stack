@@ -1,5 +1,5 @@
 FROM alpine/helm:3.17.3 AS helm
-FROM python:3.12-slim
+FROM python:3.15.2-slim
 COPY --from=helm /usr/bin/helm /usr/local/bin/helm
 COPY charts/model /opt/charts/model
 RUN helm dependency build /opt/charts/model

@@ -259,7 +259,7 @@ me how to remove the GPU and delete the installation.
 
 Keep the launcher as FastAPI with plain HTML, CSS, and JavaScript. Integrations are ordinary modules; deployment configuration stays in Compose and Helm.
 
-From the repository root, with Python 3.12, Helm, and Docker installed:
+From the repository root, with Python 3.15, Helm, and Docker installed:
 
 ```bash
 python3 -m venv .venv
