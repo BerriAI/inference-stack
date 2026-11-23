@@ -244,6 +244,11 @@ def enable_lens():
     values = json.loads(run(*helm, 'get', 'values', 'inference-stack', '-n', 'inference', '-o', 'json'))
     public_url = values['launcher']['litellmPublicUrl'].removesuffix('/litellm')
     overrides = lens_values(public_url)
+    if metadata('instance-type') == 't3.large':
+        lens = values.get('lens', {})
+        for saved, target in ((lens, overrides['lens']), (lens.get('clickhouse', {}), overrides['lens'].setdefault('clickhouse', {}))):
+            if 'cpu' not in saved.get('resources', {}).get('requests', {}):
+                target['resources'] = {'requests': {'cpu': '50m'}}
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / 'lens.json'
         write(path, json.dumps(overrides))

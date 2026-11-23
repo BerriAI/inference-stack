@@ -217,7 +217,7 @@ After the chart update, rerun the [Kubernetes setup command](#kubernetes) to rec
 
 For AWS, launch a new stack with this release and a different stack name. Deploy your models and create application keys there. Keep the original installation until requests work in the new one, then [delete the original stack](#aws). Updating only the launcher image does not update its AWS infrastructure.
 
-To enable only Lens on an existing AWS v0.4.0 install, keep the current CloudFormation stack. Take a backup and check CPU, memory and disk headroom before enabling Lens. Use Systems Manager to connect to the launcher, then run `sudo python3 /path/to/updated/aws/bootstrap.py --enable-lens` with the Lens-enabled bootstrap script. It uses the chart already installed on the instance and keeps the existing release values, instance, credentials and disks. If GPU nodes are running, cordon them before enabling Lens so ClickHouse's local volume is placed on the launcher, then uncordon them after ClickHouse is ready.
+To enable only Lens on an existing AWS v0.4.0 install, keep the current CloudFormation stack. Take a backup and check CPU, memory and disk headroom before enabling Lens. Use Systems Manager to connect to the launcher, then run `sudo python3 /path/to/updated/aws/bootstrap.py --enable-lens` with the Lens-enabled bootstrap script. It uses the chart already installed on the instance and keeps the existing release values, instance, credentials and disks. On a `t3.large`, it saves a CPU request of 50m each for Lens and ClickHouse unless you have set your own requests. If GPU nodes are running, cordon them before enabling Lens so ClickHouse's local volume is placed on the launcher, then uncordon them after ClickHouse is ready.
 
 ## Deploy with your agent
 

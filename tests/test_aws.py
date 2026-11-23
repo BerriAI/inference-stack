@@ -144,10 +144,31 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(overrides['lens'], bootstrap.lens_values(public_url)['lens'])
 
         with patch.dict(os.environ), patch.object(bootstrap, 'run', side_effect=helm) as run, \
+             patch.object(bootstrap, 'metadata', return_value='t3.xlarge'), \
              patch.object(bootstrap, 'configure_proxy') as proxy:
             bootstrap.enable_lens()
         self.assertEqual(run.call_count, 2)
         proxy.assert_called_once_with(public_url)
+
+    def test_t3_large_lens_upgrade_persists_small_cpu_requests_without_overriding_custom_requests(self):
+        public_url = 'https://example.cloudfront.net'
+        for saved_cpu in (None, '40m'):
+            with self.subTest(saved_cpu=saved_cpu):
+                saved_lens = {'enabled': False}
+                if saved_cpu:
+                    saved_lens['resources'] = {'requests': {'cpu': saved_cpu}}
+                def helm(*args):
+                    if args[1] == 'get':
+                        return json.dumps({'launcher': {'litellmPublicUrl': public_url + '/litellm'}, 'lens': saved_lens})
+                    lens = json.loads(Path(args[args.index('-f') + 1]).read_text())['lens']
+                    self.assertEqual(lens['clickhouse']['resources'], {'requests': {'cpu': '50m'}})
+                    self.assertEqual(lens.get('resources'), None if saved_cpu else {'requests': {'cpu': '50m'}})
+
+                with patch.dict(os.environ), patch.object(bootstrap, 'run', side_effect=helm), \
+                     patch.object(bootstrap, 'metadata', return_value='t3.large') as metadata, \
+                     patch.object(bootstrap, 'configure_proxy'):
+                    bootstrap.enable_lens()
+                metadata.assert_called_once_with('instance-type')
 
     def test_command_errors_hide_raw_output(self):
         with patch.object(bootstrap.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stdout='private-value', stderr='private-value')):
