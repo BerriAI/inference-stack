@@ -184,7 +184,7 @@ Remove models in the launcher before stopping the stack. For Compose:
 docker compose down
 ```
 
-This keeps the database and launcher-state volumes. For Kubernetes:
+This keeps the database, launcher-state and Grafana volumes. For Kubernetes:
 
 ```bash
 helm uninstall inference-stack --namespace inference
@@ -201,6 +201,8 @@ For Docker, rerun the installer from the directory containing `inference-stack`.
 ```bash
 curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.4.0/install.sh | bash -s -- docker
 ```
+
+When updating a Docker install that predates the Grafana volume, run the installer before removing or recreating the old Grafana container. The installer copies its dashboards and other Grafana data into the new volume. A stopped container can still be migrated.
 
 For an existing Kubernetes cluster, update the chart while retaining your values:
 

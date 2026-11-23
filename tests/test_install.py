@@ -11,6 +11,8 @@ import tempfile
 import time
 import unittest
 
+import yaml
+
 
 class InstallerTests(unittest.TestCase):
     def setUp(self):
@@ -90,6 +92,158 @@ fi
         self.assertEqual(content, env.read_bytes())
         self.assertIn('up -d --no-build --wait', self.log.read_text())
         self.assertNotIn(content.decode().splitlines()[0].split('=')[1], first.stdout)
+
+    def test_compose_mounts_a_named_grafana_data_volume(self):
+        compose = Path(__file__).resolve().parents[1] / 'compose/docker-compose.yaml'
+        recipe = yaml.safe_load(compose.read_text())
+        self.assertIn('grafana', recipe['volumes'])
+        self.assertIn('grafana:/var/lib/grafana', recipe['services']['grafana']['volumes'])
+
+    def grafana_container(self, *, persisted=False, running=True, copy_fails=False):
+        self.env.update(GRAFANA_PERSISTED=str(persisted).lower(),
+                        GRAFANA_RUNNING=str(running).lower(),
+                        GRAFANA_COPY_FAILS=str(copy_fails).lower())
+        self.tool('docker', '''printf '%s\\n' "$1 ${2:-} ${3:-}" >> "$CALLS"
+case "$1 ${2:-}" in
+  "compose ps") echo legacy-grafana ;;
+  "inspect --format")
+    case "$3" in
+      *Mounts*) printf '%s\\n' /var/lib/grafana/dashboards
+                if [ "$GRAFANA_PERSISTED" = true ]; then echo /var/lib/grafana; fi ;;
+      *Running*) echo "$GRAFANA_RUNNING" ;;
+    esac ;;
+  "cp legacy-grafana:/var/lib/grafana/.")
+    [ "$GRAFANA_COPY_FAILS" = false ] || exit 1
+    if [ -n "${GRAFANA_ARCHIVE:-}" ]; then cat "$GRAFANA_ARCHIVE"; else echo grafana-archive; fi ;;
+  "compose run")
+    if [ -n "${GRAFANA_ARCHIVE:-}" ]; then
+      shift 9
+      script=$(printf '%s' "$1" | sed -e 's|^      data=/var/lib/grafana$|      data="$GRAFANA_VOLUME"|' -e 's|/proc/self/mountinfo|"$GRAFANA_MOUNTINFO"|')
+      shift
+      /bin/sh -ec "$script" "$@"
+    else
+      [ "$(cat)" = grafana-archive ]
+    fi ;;
+  "compose up")
+    [ "${GRAFANA_UP_FAILS:-}" != yes ] ;;
+esac
+''')
+
+    def grafana_migration(self):
+        self.checkout()
+        self.grafana_container()
+        source = self.root / 'grafana-source'
+        volume = self.root / 'grafana-volume'
+        source.mkdir()
+        volume.mkdir()
+        (volume / 'plugins').mkdir()
+        (volume / 'dashboards').mkdir()
+        mountinfo = self.root / 'mountinfo'
+        mountinfo.write_text(f'1 0 0:78 / / rw - overlay overlay rw\n'
+                             f'2 1 0:78 /volume {volume} rw - overlay overlay rw\n'
+                             f'3 2 0:78 /content {volume}/dashboards ro - overlay overlay rw\n')
+        self.env.update(GRAFANA_VOLUME=str(volume), GRAFANA_ARCHIVE=str(self.root / 'grafana.tar'),
+                        GRAFANA_MOUNTINFO=str(mountinfo))
+        return source, volume
+
+    def archive_grafana(self, source):
+        with tarfile.open(self.env['GRAFANA_ARCHIVE'], 'w') as tar:
+            tar.add(source, arcname='.')
+
+    def test_grafana_retry_refreshes_the_snapshot(self):
+        source, volume = self.grafana_migration()
+        (source / 'grafana.db').write_text('before failed upgrade')
+        (source / 'plugins').mkdir()
+        (source / 'plugins/old-plugin').touch()
+        self.archive_grafana(source)
+        self.env['GRAFANA_UP_FAILS'] = 'yes'
+        self.assertNotEqual(self.run_install().returncode, 0)
+        self.assertEqual((volume / 'grafana.db').read_text(), 'before failed upgrade')
+
+        (source / 'grafana.db').write_text('dashboard edited after restart')
+        (source / 'plugins/old-plugin').unlink()
+        self.archive_grafana(source)
+        del self.env['GRAFANA_UP_FAILS']
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((volume / 'grafana.db').read_text(), 'dashboard edited after restart')
+        self.assertFalse((volume / 'plugins/old-plugin').exists())
+        self.assertTrue((volume / 'dashboards').is_dir())
+
+    def test_grafana_retry_after_partial_copy(self):
+        source, volume = self.grafana_migration()
+        (source / 'grafana.db').write_text('complete database')
+        self.archive_grafana(source)
+        self.tool('cp', '''if [ "${GRAFANA_VOLUME_FULL:-}" = yes ] && [ "$1" = -a ]; then
+  printf 'partial database' > "${3}grafana.db"
+  printf 'No space left on device\\n' >&2
+  exit 1
+fi
+exec /bin/cp "$@"
+''')
+        self.env['GRAFANA_VOLUME_FULL'] = 'yes'
+        result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('No space left on device', result.stderr)
+        self.assertIn('start legacy-grafana', self.log.read_text())
+        self.assertEqual((volume / 'grafana.db').read_text(), 'partial database')
+
+        del self.env['GRAFANA_VOLUME_FULL']
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((volume / 'grafana.db').read_text(), 'complete database')
+
+    def test_grafana_migration_refuses_a_missing_volume_with_a_dashboards_mount(self):
+        source, volume = self.grafana_migration()
+        (source / 'grafana.db').touch()
+        self.archive_grafana(source)
+        mountinfo = Path(self.env['GRAFANA_MOUNTINFO'])
+        parent, _, child = mountinfo.read_text().splitlines()
+        mountinfo.write_text(f'{parent}\n{child}\n')
+        result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('start legacy-grafana', self.log.read_text())
+        self.assertFalse((volume / 'grafana.db').exists())
+
+    def test_upgrade_migrates_grafana_before_recreating_services(self):
+        self.bundle()
+        self.existing(version='0.3.1')
+        self.grafana_container()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log.read_text().splitlines()[-5:], [
+            'inspect --format {{.State.Running}}', 'stop legacy-grafana ',
+            'cp legacy-grafana:/var/lib/grafana/. -', 'compose run --no-deps', 'compose up -d',
+        ])
+
+    def test_stopped_grafana_can_be_migrated(self):
+        self.checkout()
+        self.grafana_container(running=False)
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.log.read_text()
+        self.assertIn('compose run --no-deps', calls)
+        self.assertNotIn('stop legacy-grafana', calls)
+
+    def test_persisted_grafana_is_not_migrated_again(self):
+        self.checkout()
+        self.grafana_container(persisted=True)
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.log.read_text()
+        self.assertNotIn('stop legacy-grafana', calls)
+        self.assertNotIn('compose run', calls)
+        self.assertIn('compose up -d', calls)
+
+    def test_failed_grafana_copy_restarts_original_without_recreating_it(self):
+        self.checkout()
+        self.grafana_container(copy_fails=True)
+        result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Could not migrate Grafana data', result.stderr)
+        calls = self.log.read_text()
+        self.assertIn('start legacy-grafana', calls)
+        self.assertNotIn('compose up', calls)
 
     def test_upgrade_adds_lens_credentials_without_replacing_existing_ones(self):
         self.checkout()
