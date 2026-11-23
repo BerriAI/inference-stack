@@ -9,8 +9,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
       - run: pip install -r launcher/requirements.txt
@@ -18,10 +18,10 @@ jobs:
       - run: node --check launcher/static/login.js
       - run: pip install cfn-lint==1.61.0 && cfn-lint aws/stack.yaml
       - run: |
-          npm install --prefix "$RUNNER_TEMP/browser-tests" --no-package-lock playwright@1.62.1
+          npm install --prefix "$RUNNER_TEMP/browser-tests" --no-package-lock playwright@1.65.1
           "$RUNNER_TEMP/browser-tests/node_modules/.bin/playwright" install --with-deps chromium
           NODE_PATH="$RUNNER_TEMP/browser-tests/node_modules" node --test tests/test_model_settings.cjs
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5.1.0
         with:
           version: v3.17.3
       - run: |

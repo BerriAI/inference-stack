@@ -283,7 +283,7 @@ docker build -f launcher/Dockerfile -t inference-stack-launcher:dev .
 The browser regression tests use Playwright with Chromium:
 
 ```bash
-npm install --prefix /tmp/inference-stack-browser-tests --no-package-lock playwright@1.62.1
+npm install --prefix /tmp/inference-stack-browser-tests --no-package-lock playwright@1.65.1
 /tmp/inference-stack-browser-tests/node_modules/.bin/playwright install chromium
 NODE_PATH=/tmp/inference-stack-browser-tests/node_modules node --test tests/test_model_settings.cjs
 ```
