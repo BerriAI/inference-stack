@@ -144,7 +144,11 @@ VALUES
   litellm_pod="${litellm_pods%%$'\n'*}"
   [[ -n "$litellm_pod" ]] || { printf 'No running LiteLLM proxy pod found. Check kubectl get pods -n inference, then retry.\n' >&2; exit 1; }
   kubectl wait --namespace inference --for=condition=Ready "$litellm_pod" --timeout=60s >/dev/null
-  for mapping in svc/inference-stack-launcher:8080:8080 "$litellm_pod:4000:4000" svc/inference-stack-grafana:3000:80 svc/inference-stack-lens:4318:4318; do
+  mappings=(svc/inference-stack-launcher:8080:8080 "$litellm_pod:4000:4000" svc/inference-stack-grafana:3000:80)
+  if kubectl get service inference-stack-lens --namespace inference >/dev/null 2>&1; then
+    mappings+=(svc/inference-stack-lens:4318:4318)
+  fi
+  for mapping in "${mappings[@]}"; do
     target="${mapping%%:*}"
     ports="${mapping#*:}"
     kubectl port-forward --namespace inference "$target" "$ports" >/dev/null 2>&1 &

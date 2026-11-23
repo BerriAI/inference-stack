@@ -36,6 +36,9 @@ if [ "$1" = get ] && [ "$2" = pods ]; then
     *) echo pod/inference-stack-litellm-migrations;;
   esac
 fi
+if [ "$1" = get ] && [ "$2" = service ]; then
+  [ "${NO_LENS:-}" != yes ] || exit 1
+fi
 if [ "$1" = port-forward ]; then
   case "$*" in
     *svc/inference-stack-litellm*|*pod/inference-stack-litellm-migrations*)
@@ -203,6 +206,15 @@ fi
         self.assertNotIn('install inference-stack', self.log.read_text())
 
     def test_existing_helm_install_is_reused_and_forwards_stop(self):
+        calls = self.run_kubernetes_forwards(expected=4)
+        self.assertIn('port-forward --namespace inference svc/inference-stack-lens 4318:4318', calls)
+
+    def test_disabled_lens_is_not_forwarded(self):
+        self.env['NO_LENS'] = 'yes'
+        calls = self.run_kubernetes_forwards(expected=3)
+        self.assertNotIn('inference-stack-lens 4318', calls)
+
+    def run_kubernetes_forwards(self, expected):
         self.checkout()
         self.env['HELM_EXISTS'] = 'yes'
         process = subprocess.Popen(['/bin/bash', str(self.install), 'kubernetes'],
@@ -211,7 +223,7 @@ fi
         try:
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
-                if self.log.exists() and self.log.read_text().count('port-forward') == 3:
+                if self.log.exists() and self.log.read_text().count('port-forward') == expected - 1:
                     break
                 time.sleep(0.05)
             process.send_signal(signal.SIGTERM)
@@ -219,9 +231,10 @@ fi
             self.assertEqual(process.returncode, 143, err)
             calls = self.log.read_text()
             self.assertNotIn('install inference-stack', calls)
-            self.assertEqual(calls.count('port-forward'), 4)
+            self.assertEqual(calls.count('port-forward'), expected)
             self.assertIn('port-forward --namespace inference pod/inference-stack-litellm-proxy 4000:4000', calls)
             self.assertIn('wait --namespace inference --for=condition=Ready pod/inference-stack-litellm-proxy', calls)
+            return calls
         finally:
             if process.poll() is None:
                 process.kill()
