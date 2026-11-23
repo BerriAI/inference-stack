@@ -54,6 +54,49 @@ download_bundle() {
     [[ -f "$extracted/compose/docker-compose.yaml" && -f "$extracted/VERSION" ]] || { printf 'The release archive is incomplete.\n' >&2; exit 1; }
 }
 
+migrate_grafana_data() {
+  local container mounts running archive
+  container="$(docker compose ps --all --quiet grafana)"
+  [[ -n "$container" ]] || return 0
+  mounts="$(docker inspect --format '{{range .Mounts}}{{println .Destination}}{{end}}' "$container")"
+  if grep -Fxq /var/lib/grafana <<< "$mounts"; then return 0; fi
+
+  if [[ -z "$temporary" ]]; then temporary="$(mktemp -d)"; fi
+  archive="$temporary/grafana-data.tar"
+  running="$(docker inspect --format '{{.State.Running}}' "$container")"
+  if [[ "$running" == true ]]; then docker stop "$container" >/dev/null; fi
+  if docker cp "$container:/var/lib/grafana/." - > "$archive" &&
+    docker compose run --no-deps --rm -T --entrypoint /bin/sh grafana -ec '
+      data=/var/lib/grafana
+      marker="$data/.inference-stack-migrated-from"
+      awk -v data="$data" '\''$5 == data { found = 1 } END { exit !found }'\'' /proc/self/mountinfo
+      retry=false
+      if [ -f "$marker" ] && [ "$(cat "$marker")" = "$1" ]; then
+        retry=true
+      elif [ -n "$(find "$data" -mindepth 1 -maxdepth 1 ! -name dashboards ! -name plugins)" ] ||
+         { [ -d "$data/plugins" ] && [ -n "$(ls -A "$data/plugins")" ]; }; then
+        printf "Grafana data volume is not empty; refusing to overwrite it.\n" >&2
+        exit 1
+      fi
+      stage="$(mktemp -d)"
+      trap '\''rm -rf "$stage"'\'' EXIT
+      tar -xof - -C "$stage" --exclude=./dashboards --exclude=./.inference-stack-migrated-from
+      if [ "$retry" = true ]; then
+        find "$data" -mindepth 1 -maxdepth 1 ! -name dashboards ! -name "${marker##*/}" -exec rm -rf -- {} +
+      elif ! printf "%s\n" "$1" > "$marker"; then
+        rm -f "$marker"
+        exit 1
+      fi
+      cp -a "$stage/." "$data/"
+    ' migrate-grafana "$container" < "$archive"; then
+    printf 'Grafana data migrated to its Compose volume.\n'
+  else
+    printf 'Could not migrate Grafana data; the original Grafana container was not removed.\n' >&2
+    if [[ "$running" == true ]]; then docker start "$container" >/dev/null; fi
+    return 1
+  fi
+}
+
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-/dev/null}")" && pwd)"
 if [[ -f "$script_dir/compose/docker-compose.yaml" ]]; then
   root="$script_dir"
@@ -112,6 +155,7 @@ if [[ "$mode" == docker ]]; then
   for name in LENS_ADMIN_TOKEN CLICKHOUSE_PASSWORD; do
     grep -q "^$name=" .env || printf '%s=%s\n' "$name" "$(openssl rand -hex 32)" >> .env
   done
+  migrate_grafana_data
   docker compose up -d --no-build --wait </dev/null
   printf '\nOpen http://localhost:8080\nSign in as admin with LITELLM_MASTER_KEY from compose/.env.\nChoose Deployments to deploy a model, or enable simulation in its Settings.\nAgent traces: open http://localhost:4318/ui/ and sign in with LENS_ADMIN_TOKEN from compose/.env.\n'
 else
