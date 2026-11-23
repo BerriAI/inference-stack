@@ -20,7 +20,9 @@ class ComposePostgresUpgradeTests(unittest.TestCase):
     def setUp(self):
         self.project = f'inference-stack-test-{uuid.uuid4().hex[:8]}'
         self.env = {**os.environ, 'POSTGRES_PASSWORD': 'test-only-database-password-0123456789',
-                    'LITELLM_MASTER_KEY': 'sk-test-only-master-key-0123456789'}
+                    'LITELLM_MASTER_KEY': 'sk-test-only-master-key-0123456789',
+                    'CLICKHOUSE_PASSWORD': 'test-only-clickhouse-password-0123456789',
+                    'LENS_ADMIN_TOKEN': 'test-only-lens-admin-token-0123456789'}
         # The recipe names its network, so give each test its own to stay off a running stack.
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
