@@ -51,7 +51,7 @@ To start:
 5. Wait for the GPU and model to become ready. Leave the page and return while setup continues; progress is retained.
 6. When the model is **Ready**, choose **Try in LiteLLM**. Sign in as `admin` with the same password. In **Chat**, select the API model name shown on the deployment page and send a message. A model response confirms your first request.
 
-The launcher costs $0.0832/hour for compute and has a 40 GB disk. The GPU picker lists supported NVIDIA machines offered in the installation’s availability zone, with GPU count, memory, and current On-Demand price per machine. Choose up to four machines, including different GPU types; each gets a 200 GB disk. Disk, public IPv4, network, and other AWS charges are additional. The launcher keeps running when there are no GPUs.
+The v0.4.0 template linked above uses a $0.0832/hour CPU instance. The AWS template with Lens uses a `t3.xlarge` ($0.1664/hour in Ohio) and requires 4 Standard On-Demand vCPUs. Both use a 40 GB disk. The GPU picker lists supported NVIDIA machines offered in the installation’s availability zone, with GPU count, memory, and current On-Demand price per machine. Choose up to four machines, including different GPU types; each gets a 200 GB disk. Disk, public IPv4, network, and other AWS charges are additional. The launcher keeps running when there are no GPUs.
 
 **GPU quota:** the launcher checks the selected machine’s vCPU requirement against your remaining regional G/VT or P instance quota. If more quota is needed, choose **AWS quotas** to open the relevant limit in Service Quotas. AWS confirms spare capacity at launch; a failed launch appears on the GPUs page and can be cancelled before choosing another type.
 
@@ -83,9 +83,11 @@ LiteLLM and Grafana open in new tabs. Use **Replica scheduling → Settings** to
 
 ### Agent traces with Lens
 
-Lens 0.4.0 runs standalone next to LiteLLM, with its own ClickHouse storage and 14 days of retention. Open **Lens · Agent traces** on the launcher home and sign in with the Lens admin token: `LENS_ADMIN_TOKEN` in `compose/.env`, or the `admin-token` field of Secret `inference-stack-lens-admin` on Kubernetes. On **Home**, choose **Standalone Lens**, pick Claude Code, Codex or OpenCode, and choose **Copy instructions with new key**: Lens creates a tracing key and copies setup instructions for that agent. Any other OTLP exporter sends traces to `http://localhost:4318/v1/traces` and logs to `http://localhost:4318/v1/logs` with `Authorization: Bearer <tracing key>`. See [Claude Code telemetry](https://github.com/BerriAI/lens/blob/v0.4.0/docs/claude-code.md#standalone-lens) for the full variable list.
+Lens 0.4.0 runs standalone next to LiteLLM, with its own ClickHouse storage and 14 days of retention. Open **Lens · Agent traces** on the launcher home and sign in with the Lens admin token: `LENS_ADMIN_TOKEN` in `compose/.env`, or the `admin-token` field of Secret `inference-stack-lens-admin` on Kubernetes and Lens-enabled AWS installs. On AWS, use Systems Manager to reach the launcher instance and `sudo k3s kubectl` to access that Secret in namespace `inference`.
 
-Agents keep sending model calls to LiteLLM. LiteLLM's own gateway does not accept agent traces in this release, so send them to Lens directly. Lens is not installed on AWS yet; the AWS launcher hides the link. To turn Lens off on Kubernetes, set `lens.enabled=false`; for a Lens address beyond port-forwarding, set `lens.publicUrl` and `launcher.lensPublicUrl` to the address browsers open.
+On **Home**, choose **Standalone Lens**, pick Claude Code, Codex or OpenCode, and choose **Copy instructions with new key**: Lens creates a tracing key and copies setup instructions for that agent. Any other OTLP exporter sends traces to `/v1/traces` and logs to `/v1/logs` with `Authorization: Bearer <tracing key>`. Use the launcher's CloudFront HTTPS address on AWS or `http://localhost:4318` for local Docker or port-forwarded Kubernetes. See [Claude Code telemetry](https://github.com/BerriAI/lens/blob/v0.4.0/docs/claude-code.md#standalone-lens) for the full variable list.
+
+Agents keep sending model calls to LiteLLM. LiteLLM's own gateway does not accept agent traces in this release, so send them to Lens directly. To turn Lens off on Kubernetes, set `lens.enabled=false`; for a Lens address beyond port-forwarding, set `lens.publicUrl` and `launcher.lensPublicUrl` to the address browsers open.
 
 ## Configuration
 
@@ -135,7 +137,7 @@ For dashboards hosted beyond port-forwarding, set `launcher.litellmPublicUrl`, `
 | Admin password | AWS launcher, LiteLLM, and Grafana sign-in | Chosen during AWS setup |
 | LiteLLM master key | Docker/Kubernetes launcher and LiteLLM admin login | Compose `.env`, or the generated Kubernetes Secret described above |
 | Postgres passwords | Stack services | Generated during installation |
-| Lens admin token | Lens sign-in | Compose `.env`, or Secret `inference-stack-lens-admin` on Kubernetes |
+| Lens admin token | Lens sign-in | Compose `.env`, or Secret `inference-stack-lens-admin` on Kubernetes and AWS |
 | Virtual key | Application requests | Create in the LiteLLM dashboard |
 
 To use a separate launcher password, set `LAUNCHER_PASSWORD` in the launcher's container environment. It must be a generated value of at least 20 characters. Keep the existing database and gateway credentials when restarting an installation.
@@ -214,6 +216,8 @@ helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
 
 For AWS, launch a new stack with this release and a different stack name. Deploy your models and create application keys there. Keep the original installation until requests work in the new one, then [delete the original stack](#aws). Updating only the launcher image does not update its AWS infrastructure.
+
+To enable only Lens on an existing AWS v0.4.0 install, keep the current CloudFormation stack. Take a backup and check CPU, memory and disk headroom before enabling Lens. Use Systems Manager to connect to the launcher, then run `sudo python3 /path/to/updated/aws/bootstrap.py --enable-lens` with the Lens-enabled bootstrap script. It uses the chart already installed on the instance and keeps the existing release values, instance, credentials and disks. On a `t3.large`, it saves a CPU request of 50m each for Lens and ClickHouse unless you have set your own requests. If GPU nodes are running, cordon them before enabling Lens so ClickHouse's local volume is placed on the launcher, then uncordon them after ClickHouse is ready.
 
 ## Deploy with your agent
 
