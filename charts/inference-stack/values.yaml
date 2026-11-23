@@ -48,7 +48,7 @@ lens:
   enabled: true
   fullnameOverride: inference-stack-lens
   image:
-    digest: sha256:19da641d3ac3f2fa1f56bca9a5b895c1128c61ea31dc55e2cc2b9dfd7814112c
+    digest: sha256:7a9dd491cc84d0cdfcae2fb0bd4c2c32482ea03600e4ac035322c858db0bd4cf
 
 prometheus:
   alertmanager:
