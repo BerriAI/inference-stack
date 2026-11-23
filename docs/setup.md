@@ -194,11 +194,11 @@ For Docker, rerun the installer from the directory containing `inference-stack`.
 curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.3.1/install.sh | bash -s -- docker
 ```
 
-For an existing Kubernetes cluster, update the chart while retaining your values:
+For an existing Kubernetes cluster, update the chart with the new defaults and retain your explicit overrides:
 
 ```bash
 helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.3.1/inference-stack-0.3.1.tgz \
-  --namespace inference --reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.3.1 --wait
+  --namespace inference --reset-then-reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.3.1 --wait
 ```
 
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
