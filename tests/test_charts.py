@@ -11,6 +11,22 @@ from test_launcher import app
 
 class ChartTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
+    def test_prometheus_server_image_matches_compose(self):
+        root = Path(__file__).resolve().parents[1]
+        compose = yaml.safe_load((root / "compose/docker-compose.yaml").read_text())
+        result = subprocess.run(
+            ["helm", "template", "inference-stack", str(root / "charts/inference-stack"),
+             "--set-string", "litellm.postgresql.auth.password=test-only-database-password-0123456789",
+             "--set-string", "litellm.postgresql.auth.postgres-password=test-only-database-admin-0123456789"],
+            text=True, capture_output=True, timeout=20, check=True,
+        )
+        server = next(r for r in yaml.safe_load_all(result.stdout)
+                      if r and r["kind"] == "Deployment" and r["metadata"]["name"] == "inference-stack-prometheus")
+        containers = server["spec"]["template"]["spec"]["containers"]
+        prometheus = next(c for c in containers if c["name"] == "prometheus-server")
+        self.assertEqual(prometheus["image"], compose["services"]["prometheus"]["image"])
+
+    @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
     def test_mixed_gpu_fleet_schedules_on_matching_capacity(self):
         chart = Path(__file__).resolve().parents[1] / "charts/model"
         for simulated in (False, True):

@@ -97,7 +97,7 @@ services:
       - epp
 
   prometheus:
-    image: prom/prometheus:v3.1.0
+    image: quay.io/prometheus/prometheus:v3.16.0
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - router-state:/state:ro

@@ -194,12 +194,14 @@ For Docker, rerun the installer from the directory containing `inference-stack`.
 curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.3.1/install.sh | bash -s -- docker
 ```
 
-For an existing Kubernetes cluster, update the chart while retaining your values:
+For an existing Kubernetes cluster, update the chart while retaining your explicitly set values and accepting the new chart defaults:
 
 ```bash
 helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.3.1/inference-stack-0.3.1.tgz \
-  --namespace inference --reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.3.1 --wait
+  --namespace inference --reset-then-reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.3.1 --wait
 ```
+
+Use `--reset-then-reuse-values` rather than `--reuse-values` when upgrading to Prometheus chart 30.0.0. Reusing the old defaults can load duplicate scrape jobs and prevent Prometheus from starting. If you explicitly configured `prometheus.serverFiles."prometheus.yml".scrape_configs`, migrate those jobs to `prometheus.scrapeConfigs` first; see the [upstream migration notes](https://github.com/prometheus-community/helm-charts/blob/prometheus-30.0.0/charts/prometheus/README.md#to-280).
 
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
 
