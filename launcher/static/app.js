@@ -33,7 +33,7 @@ function external(key, text, primary = false, suffix = '') {
 function logo(key) {
   if (key === 'deployments') return '<svg class="stack-logo" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="5" y="6" width="30" height="11" rx="3"/><rect x="5" y="23" width="30" height="11" rx="3"/><path d="M11 11.5h3m-3 17h3"/></svg>';
   if (key === 'litellm') return '<img class="stack-logo logo-light" src="/static/logos/litellm.svg" alt=""><img class="stack-logo logo-dark" src="/static/logos/litellmDark.svg" alt="">';
-  return `<img class="stack-logo logo-${key}" src="/static/logos/${key}.${['grafana','huggingface'].includes(key)?'svg':'png'}" alt="">`;
+  return `<img class="stack-logo logo-${key}" src="/static/logos/${key}.${['grafana','huggingface','lens'].includes(key)?'svg':'png'}" alt="">`;
 }
 function hardware() {
   const h = state.status.hardware;
@@ -122,10 +122,10 @@ function home() {
     const url = s.components[action]?.url;
     const open = url && /^https?:\/\//.test(url) ? `<a href="${escape(url)}" target="_blank" rel="noopener noreferrer"` : `<button type="button" data-action="${action}"`;
     return `${open} class="stack-tile">${logo(brand)}<span class="tile-arrow">${forwardArrow}</span><div><h2>${title}</h2><p>${subtitle}</p>${problem?`<div class="tile-problem">${escape(problem)}</div>`:''}</div>${url?'</a>':'</button>'}`;
-  }).join('')}</div><div class="stack-secondary"><div>${external('grafana','Grafana · Usage and performance')}${!s.components.grafana.healthy?'<p class="stack-blocker">Grafana is unreachable</p>':''}</div><div>${s.models.length?textButton('Replica scheduling →','routing'):''}${!s.components.router.healthy?'<p class="stack-blocker">Routing needs attention</p>':''}</div></div>${poweredBy()}`;
+  }).join('')}</div><div class="stack-secondary"><div>${external('grafana','Grafana · Usage and performance')}${!s.components.grafana.healthy?'<p class="stack-blocker">Grafana is unreachable</p>':''}</div><div>${external('lens','Lens · Agent traces')}${s.components.lens && !s.components.lens.healthy?'<p class="stack-blocker">Lens is unreachable</p>':''}</div><div>${s.models.length?textButton('Replica scheduling →','routing'):''}${!s.components.router.healthy?'<p class="stack-blocker">Routing needs attention</p>':''}</div></div>${poweredBy()}`;
 }
 function poweredBy() {
-  const projects = [['huggingface','Hugging Face','https://huggingface.co'],['vllm','vLLM','https://vllm.ai'],['litellm','LiteLLM','https://www.litellm.ai'],['grafana','Grafana','https://grafana.com']];
+  const projects = [['huggingface','Hugging Face','https://huggingface.co'],['vllm','vLLM','https://vllm.ai'],['litellm','LiteLLM','https://www.litellm.ai'],['grafana','Grafana','https://grafana.com'],['lens','Lens','https://github.com/BerriAI/lens']];
   if(state.status.mode==='compose' || state.status.models.length) projects.push(['llmd','llm-d','https://llm-d.ai']);
   return `<footer class="stack-powered" aria-label="Powered by open source">${projects.map(([key,name,url])=>`<a href="${url}" title="${name}" aria-label="${name} project" target="_blank" rel="noopener noreferrer">${logo(key)}</a>`).join('')}</footer>`;
 }

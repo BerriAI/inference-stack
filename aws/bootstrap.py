@@ -175,7 +175,8 @@ def chart_values(public_url, password, credentials):
     control = {'inference-stack/role': 'control'}
     return {
         'launcher': {'nodeSelector': control, 'adminSecret': 'inference-stack-admin',
-                     'awsCapacity': True, 'litellmPublicUrl': public_url + '/litellm', 'grafanaPublicUrl': public_url + '/grafana'},
+                     'awsCapacity': True, 'litellmPublicUrl': public_url + '/litellm', 'grafanaPublicUrl': public_url + '/grafana', 'lensPublicUrl': ''},
+        'lens': {'enabled': False},
         'litellm': {
             'nodeSelector': control, 'masterkey': credentials['masterkey'],
             'resources': {'requests': {'cpu': '500m', 'memory': '4Gi'}, 'limits': {'memory': '5Gi'}},

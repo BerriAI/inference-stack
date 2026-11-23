@@ -48,6 +48,31 @@ class ChartTests(unittest.TestCase):
                 self.assertEqual(environment["LAUNCHER_PASSWORD"]["valueFrom"]["secretKeyRef"]["name"], "test-only-admin")
 
     @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
+    def test_lens_runs_standalone_by_default_and_launcher_links_to_it(self):
+        chart = Path(__file__).resolve().parents[1] / "charts/inference-stack"
+        auth = {"litellm": {"postgresql": {"auth": {"password": "test-only-database-password-0123456789", "postgres-password": "test-only-database-admin-0123456789"}}}}
+        for enabled in (True, False):
+            values = {**auth, **({} if enabled else {"lens": {"enabled": False}})}
+            result = subprocess.run(["helm", "template", "inference-stack", str(chart), "--values", "-"],
+                                    input=json.dumps(values), text=True, capture_output=True, timeout=20, check=True)
+            resources = [r for r in yaml.safe_load_all(result.stdout) if r]
+            names = {(r["kind"], r["metadata"]["name"]) for r in resources}
+            launcher = next(r for r in resources if r["kind"] == "Deployment" and r["metadata"]["name"] == "inference-stack-launcher")
+            environment = {v["name"]: v.get("value") for v in launcher["spec"]["template"]["spec"]["containers"][0]["env"]}
+            self.assertEqual(("Service", "inference-stack-lens") in names, enabled)
+            self.assertEqual(("StatefulSet", "inference-stack-lens-clickhouse") in names, enabled)
+            if not enabled:
+                self.assertEqual(environment["LENS_PUBLIC_URL"], "")
+                continue
+            service = next(r for r in resources if r["kind"] == "Service" and r["metadata"]["name"] == "inference-stack-lens")
+            self.assertEqual(environment["LENS_URL"], f"http://inference-stack-lens:{service['spec']['ports'][0]['port']}")
+            self.assertEqual(environment["LENS_PUBLIC_URL"], "http://localhost:4318")
+            lens = next(r for r in resources if r["kind"] == "Deployment" and r["metadata"]["name"] == "inference-stack-lens")
+            container = lens["spec"]["template"]["spec"]["containers"][0]
+            self.assertRegex(container["image"], r"^ghcr\.io/berriai/lens@sha256:[0-9a-f]{64}$")
+            self.assertEqual({v["name"]: v.get("value") for v in container["env"]}["LENS_MODE"], "standalone")
+
+    @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
     def test_each_model_mounts_its_own_rendered_router_configuration(self):
         chart = Path(__file__).resolve().parents[1] / "charts/model"
         request = app.AddModel(model="Qwen/Qwen3-0.6B", simulate=True)

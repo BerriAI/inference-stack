@@ -8,5 +8,8 @@ dependencies:
 - name: grafana
   repository: https://grafana.github.io/helm-charts
   version: 8.8.2
-digest: sha256:77f50c19f7049151f89d5ad93d78725ce449f19a6f9002c0c769ffe54504e1b7
-generated: "2026-11-21T21:57:16.964477594Z"
+- name: lens
+  repository: oci://ghcr.io/berriai/charts
+  version: 0.4.0
+digest: sha256:dd302e35e2f837d4c41485da17e4f5987e6b50cce612273f367879ce01dfa95f
+generated: "2026-11-23T16:54:52.475369883Z"

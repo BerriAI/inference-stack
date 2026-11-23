@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=0.3.1
+VERSION=0.4.0
 RELEASE="https://github.com/BerriAI/inference-stack/releases/download/v$VERSION"
 mode="${1:-}"
 case "$mode" in
@@ -109,8 +109,11 @@ if [[ "$mode" == docker ]]; then
     (umask 077; set -C; printf 'LITELLM_MASTER_KEY=sk-%s\nPOSTGRES_PASSWORD=%s\nINFERENCE_STACK_LAUNCHER_IMAGE=%s\n' \
       "$(openssl rand -hex 24)" "$(openssl rand -hex 24)" "$image" > .env)
   fi
+  for name in LENS_ADMIN_TOKEN CLICKHOUSE_PASSWORD; do
+    grep -q "^$name=" .env || printf '%s=%s\n' "$name" "$(openssl rand -hex 32)" >> .env
+  done
   docker compose up -d --no-build --wait </dev/null
-  printf '\nOpen http://localhost:8080\nSign in as admin with LITELLM_MASTER_KEY from compose/.env.\nChoose Deployments to deploy a model, or enable simulation in its Settings.\n'
+  printf '\nOpen http://localhost:8080\nSign in as admin with LITELLM_MASTER_KEY from compose/.env.\nChoose Deployments to deploy a model, or enable simulation in its Settings.\nAgent traces: open http://localhost:4318/ui/ and sign in with LENS_ADMIN_TOKEN from compose/.env.\n'
 else
   existing="$(helm list --namespace inference --deployed --failed --pending --uninstalled --superseded --uninstalling --filter '^inference-stack$' --short)"
   if [[ -n "$existing" ]]; then
@@ -141,7 +144,11 @@ VALUES
   litellm_pod="${litellm_pods%%$'\n'*}"
   [[ -n "$litellm_pod" ]] || { printf 'No running LiteLLM proxy pod found. Check kubectl get pods -n inference, then retry.\n' >&2; exit 1; }
   kubectl wait --namespace inference --for=condition=Ready "$litellm_pod" --timeout=60s >/dev/null
-  for mapping in svc/inference-stack-launcher:8080:8080 "$litellm_pod:4000:4000" svc/inference-stack-grafana:3000:80; do
+  mappings=(svc/inference-stack-launcher:8080:8080 "$litellm_pod:4000:4000" svc/inference-stack-grafana:3000:80)
+  if kubectl get service inference-stack-lens --namespace inference >/dev/null 2>&1; then
+    mappings+=(svc/inference-stack-lens:4318:4318)
+  fi
+  for mapping in "${mappings[@]}"; do
     target="${mapping%%:*}"
     ports="${mapping#*:}"
     kubectl port-forward --namespace inference "$target" "$ports" >/dev/null 2>&1 &
@@ -149,8 +156,8 @@ VALUES
   done
   sleep 2
   for pid in "${forwards[@]}"; do
-    kill -0 "$pid" 2>/dev/null || { printf 'Port forwarding failed. Check that ports 8080, 4000 and 3000 are free and your cluster permits port-forwarding.\n' >&2; exit 1; }
+    kill -0 "$pid" 2>/dev/null || { printf 'Port forwarding failed. Check that ports 8080, 4000, 3000 and 4318 are free and your cluster permits port-forwarding.\n' >&2; exit 1; }
   done
-  printf '\nOpen http://localhost:8080\nSign in as admin with the masterkey field of Secret inference-stack-litellm-masterkey in namespace inference.\nLeave this terminal open for the launcher and dashboards. Ctrl-C closes the connections; the stack keeps running.\n'
+  printf '\nOpen http://localhost:8080\nSign in as admin with the masterkey field of Secret inference-stack-litellm-masterkey in namespace inference.\nAgent traces: open http://localhost:4318/ui/ and sign in with the admin-token field of Secret inference-stack-lens-admin.\nLeave this terminal open for the launcher and dashboards. Ctrl-C closes the connections; the stack keeps running.\n'
   wait
 fi
