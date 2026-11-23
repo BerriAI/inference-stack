@@ -85,6 +85,8 @@ Shows model health, request traffic, and response times.
 ### Lens
 
 Shows agent traces and logs. It runs as its own service with its own UI; open it from **Lens · Agent traces** on the launcher home.
+
+<img src="assets/lens.png" alt="Lens showing example agent runs, including the model and tool calls in a trace" width="100%">
 <br>
 
 [Setup and configuration](docs/setup.md) · [Releases](https://github.com/BerriAI/inference-stack/releases) · [Development](docs/setup.md#development) · [MIT license](LICENSE)
