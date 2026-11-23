@@ -36,6 +36,9 @@ if [ "$1" = get ] && [ "$2" = pods ]; then
     *) echo pod/inference-stack-litellm-migrations;;
   esac
 fi
+if [ "$1" = get ] && [ "$2" = service ]; then
+  [ "${NO_LENS:-}" != yes ] || exit 1
+fi
 if [ "$1" = port-forward ]; then
   case "$*" in
     *svc/inference-stack-litellm*|*pod/inference-stack-litellm-migrations*)
@@ -87,6 +90,20 @@ fi
         self.assertEqual(content, env.read_bytes())
         self.assertIn('up -d --no-build --wait', self.log.read_text())
         self.assertNotIn(content.decode().splitlines()[0].split('=')[1], first.stdout)
+
+    def test_upgrade_adds_lens_credentials_without_replacing_existing_ones(self):
+        self.checkout()
+        env = self.root / 'compose/.env'
+        env.write_text('LITELLM_MASTER_KEY=sk-existing-key-0123456789abcdef\nPOSTGRES_PASSWORD=existing-password-0123456789\n')
+        env.chmod(0o600)
+        self.assertEqual(self.run_install().returncode, 0)
+        values = dict(line.split('=', 1) for line in env.read_text().splitlines())
+        self.assertEqual(values['LITELLM_MASTER_KEY'], 'sk-existing-key-0123456789abcdef')
+        self.assertEqual({len(values['LENS_ADMIN_TOKEN']), len(values['CLICKHOUSE_PASSWORD'])}, {64})
+        self.assertNotEqual(values['LENS_ADMIN_TOKEN'], values['CLICKHOUSE_PASSWORD'])
+        before = env.read_text()
+        self.assertEqual(self.run_install().returncode, 0)
+        self.assertEqual(before, env.read_text())
 
     def test_download_extracts_complete_bundle(self):
         self.bundle()
@@ -146,7 +163,7 @@ fi
         stack = self.existing(image='registry.example/launcher:custom')
         before = (stack / 'compose/.env').read_bytes()
         self.assertEqual(self.run_install().returncode, 0)
-        self.assertEqual((stack / 'compose/.env').read_bytes(), before)
+        self.assertTrue((stack / 'compose/.env').read_bytes().startswith(before))
 
     def test_upgrade_rewrites_old_pinned_image(self):
         self.bundle()
@@ -163,7 +180,7 @@ fi
                 self.assertEqual(self.run_install().returncode, 0)
                 self.assertEqual((stack / 'VERSION').read_text(), version + '\n')
                 self.assertEqual((stack / 'compose/docker-compose.yaml').read_text(), 'old recipe\n')
-                self.assertEqual((stack / 'compose/.env').read_bytes(), before)
+                self.assertTrue((stack / 'compose/.env').read_bytes().startswith(before))
                 shutil.rmtree(stack)
 
     def test_upgrade_backup_conflict_preserves_install(self):
@@ -189,6 +206,15 @@ fi
         self.assertNotIn('install inference-stack', self.log.read_text())
 
     def test_existing_helm_install_is_reused_and_forwards_stop(self):
+        calls = self.run_kubernetes_forwards(expected=4)
+        self.assertIn('port-forward --namespace inference svc/inference-stack-lens 4318:4318', calls)
+
+    def test_disabled_lens_is_not_forwarded(self):
+        self.env['NO_LENS'] = 'yes'
+        calls = self.run_kubernetes_forwards(expected=3)
+        self.assertNotIn('inference-stack-lens 4318', calls)
+
+    def run_kubernetes_forwards(self, expected):
         self.checkout()
         self.env['HELM_EXISTS'] = 'yes'
         process = subprocess.Popen(['/bin/bash', str(self.install), 'kubernetes'],
@@ -197,7 +223,7 @@ fi
         try:
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
-                if self.log.exists() and self.log.read_text().count('port-forward') == 3:
+                if self.log.exists() and self.log.read_text().count('port-forward') == expected - 1:
                     break
                 time.sleep(0.05)
             process.send_signal(signal.SIGTERM)
@@ -205,9 +231,10 @@ fi
             self.assertEqual(process.returncode, 143, err)
             calls = self.log.read_text()
             self.assertNotIn('install inference-stack', calls)
-            self.assertEqual(calls.count('port-forward'), 3)
+            self.assertEqual(calls.count('port-forward'), expected)
             self.assertIn('port-forward --namespace inference pod/inference-stack-litellm-proxy 4000:4000', calls)
             self.assertIn('wait --namespace inference --for=condition=Ready pod/inference-stack-litellm-proxy', calls)
+            return calls
         finally:
             if process.poll() is None:
                 process.kill()

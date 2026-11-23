@@ -22,6 +22,22 @@ class LauncherTests(unittest.TestCase):
         if app.operation_lock.locked():
             app.operation_lock.release()
 
+    def test_status_links_to_lens_ui_only_when_lens_is_installed(self):
+        probed = []
+        def healthy(url):
+            probed.append(url)
+            return "lens" not in url
+        with patch.object(app, "is_healthy", side_effect=healthy), \
+             patch.object(app.litellm_client, "list_models", return_value=[]), \
+             patch.object(app, "gpu_inventory", return_value={"count": 0, "devices": []}):
+            with patch.object(app.settings, "LENS_URL", "http://lens.internal:4318"), \
+                 patch.object(app.settings, "LENS_PUBLIC_URL", "https://traces.example"):
+                lens = self.client.get("/api/status").json()["components"]["lens"]
+            self.assertEqual(lens, {"healthy": False, "url": "https://traces.example/ui/"})
+            self.assertIn("http://lens.internal:4318/health/ready", probed)
+            with patch.object(app.settings, "LENS_PUBLIC_URL", ""):
+                self.assertNotIn("lens", self.client.get("/api/status").json()["components"])
+
     def test_admin_access_is_required_for_reads_and_mutations(self):
         anonymous = TestClient(app.app)
         for method, path, body in [("GET", "/api/status", None), ("POST", "/api/models", {"model":"org/model","simulate":True}), ("DELETE", "/api/models/example", None),

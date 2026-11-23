@@ -75,6 +75,15 @@ spec:
                   key: masterkey
             - name: GRAFANA_URL
               value: http://inference-stack-grafana
+            {{- if .Values.lens.enabled }}
+            - name: LENS_URL
+              value: http://{{ .Values.lens.fullnameOverride }}:4318
+            - name: LENS_PUBLIC_URL
+              value: {{ .Values.launcher.lensPublicUrl | quote }}
+            {{- else }}
+            - name: LENS_PUBLIC_URL
+              value: ""
+            {{- end }}
             - name: HELM_MODEL_CHART
               value: {{ .Values.launcher.modelChart }}
             - name: HELM_NAMESPACE
