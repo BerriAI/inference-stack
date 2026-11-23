@@ -2,8 +2,8 @@ apiVersion: v2
 name: inference-stack-model
 description: One model served by vLLM, routed by llm-d and registered in LiteLLM.
 type: application
-version: 0.3.1
-appVersion: "0.3.1"
+version: 0.4.0
+appVersion: "0.4.0"
 dependencies:
   - name: llm-d-router-standalone
     version: v1.0.0
