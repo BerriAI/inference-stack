@@ -11,6 +11,8 @@ import tempfile
 import time
 import unittest
 
+import yaml
+
 
 class InstallerTests(unittest.TestCase):
     def setUp(self):
@@ -90,6 +92,73 @@ fi
         self.assertEqual(content, env.read_bytes())
         self.assertIn('up -d --no-build --wait', self.log.read_text())
         self.assertNotIn(content.decode().splitlines()[0].split('=')[1], first.stdout)
+
+    def test_compose_mounts_a_named_grafana_data_volume(self):
+        compose = Path(__file__).resolve().parents[1] / 'compose/docker-compose.yaml'
+        recipe = yaml.safe_load(compose.read_text())
+        self.assertIn('grafana', recipe['volumes'])
+        self.assertIn('grafana:/var/lib/grafana', recipe['services']['grafana']['volumes'])
+
+    def grafana_container(self, *, persisted=False, running=True, copy_fails=False):
+        self.env.update(GRAFANA_PERSISTED=str(persisted).lower(),
+                        GRAFANA_RUNNING=str(running).lower(),
+                        GRAFANA_COPY_FAILS=str(copy_fails).lower())
+        self.tool('docker', '''printf '%s\\n' "$1 ${2:-} ${3:-}" >> "$CALLS"
+case "$1 ${2:-}" in
+  "compose ps") echo legacy-grafana ;;
+  "inspect --format")
+    case "$3" in
+      *Mounts*) printf '%s\\n' /var/lib/grafana/dashboards
+                if [ "$GRAFANA_PERSISTED" = true ]; then echo /var/lib/grafana; fi ;;
+      *Running*) echo "$GRAFANA_RUNNING" ;;
+    esac ;;
+  "cp legacy-grafana:/var/lib/grafana/.")
+    [ "$GRAFANA_COPY_FAILS" = false ] || exit 1
+    echo grafana-archive ;;
+  "compose run")
+    [ "$(cat)" = grafana-archive ] ;;
+esac
+''')
+
+    def test_upgrade_migrates_grafana_before_recreating_services(self):
+        self.bundle()
+        self.existing(version='0.3.1')
+        self.grafana_container()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log.read_text().splitlines()[-5:], [
+            'inspect --format {{.State.Running}}', 'stop legacy-grafana ',
+            'cp legacy-grafana:/var/lib/grafana/. -', 'compose run --no-deps', 'compose up -d',
+        ])
+
+    def test_stopped_grafana_can_be_migrated(self):
+        self.checkout()
+        self.grafana_container(running=False)
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.log.read_text()
+        self.assertIn('compose run --no-deps', calls)
+        self.assertNotIn('stop legacy-grafana', calls)
+
+    def test_persisted_grafana_is_not_migrated_again(self):
+        self.checkout()
+        self.grafana_container(persisted=True)
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.log.read_text()
+        self.assertNotIn('stop legacy-grafana', calls)
+        self.assertNotIn('compose run', calls)
+        self.assertIn('compose up -d', calls)
+
+    def test_failed_grafana_copy_restarts_original_without_recreating_it(self):
+        self.checkout()
+        self.grafana_container(copy_fails=True)
+        result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Could not migrate Grafana data', result.stderr)
+        calls = self.log.read_text()
+        self.assertIn('start legacy-grafana', calls)
+        self.assertNotIn('compose up', calls)
 
     def test_upgrade_adds_lens_credentials_without_replacing_existing_ones(self):
         self.checkout()
