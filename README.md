@@ -17,7 +17,7 @@
 
 </div>
 
-<img src="assets/stack-flow.gif" alt="Apps send requests to LiteLLM for model routing, then llm-d selects a vLLM replica. Hugging Face supplies model weights; Grafana shows metrics collected by Prometheus." width="100%">
+<img src="assets/stack-flow-lens.gif" alt="Apps send requests to LiteLLM for model routing, then llm-d selects a vLLM replica. Hugging Face supplies model weights; Lens shows traces and Grafana shows metrics collected by Prometheus." width="100%">
 
 <a id="get-started"></a>
 
