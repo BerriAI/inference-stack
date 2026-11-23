@@ -111,6 +111,7 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
+      - grafana:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ../charts/inference-stack/files/dashboards:/var/lib/grafana/dashboards:ro
     ports:
@@ -172,4 +173,5 @@ volumes:
   postgres:
   router-state:
   launcher-credentials:
+  grafana:
   clickhouse:
