@@ -70,15 +70,20 @@ migrate_grafana_data() {
       data=/var/lib/grafana
       marker="$data/.inference-stack-migrated-from"
       mountpoint -q "$data"
-      if [ -f "$marker" ] && [ "$(cat "$marker")" = "$1" ]; then exit 0; fi
-      if [ -n "$(find "$data" -mindepth 1 -maxdepth 1 ! -name dashboards ! -name plugins)" ] ||
+      retry=false
+      if [ -f "$marker" ] && [ "$(cat "$marker")" = "$1" ]; then
+        retry=true
+      elif [ -n "$(find "$data" -mindepth 1 -maxdepth 1 ! -name dashboards ! -name plugins)" ] ||
          { [ -d "$data/plugins" ] && [ -n "$(ls -A "$data/plugins")" ]; }; then
         printf "Grafana data volume is not empty; refusing to overwrite it.\n" >&2
         exit 1
       fi
       stage="$(mktemp -d)"
       trap '\''rm -rf "$stage"'\'' EXIT
-      tar -xof - -C "$stage" --exclude=./dashboards
+      tar -xof - -C "$stage" --exclude=./dashboards --exclude=./.inference-stack-migrated-from
+      if [ "$retry" = true ]; then
+        find "$data" -mindepth 1 -maxdepth 1 ! -name dashboards ! -name "${marker##*/}" -exec rm -rf -- {} +
+      fi
       cp -a "$stage/." "$data/"
       printf "%s\n" "$1" > "$marker"
     ' migrate-grafana "$container" < "$archive"; then

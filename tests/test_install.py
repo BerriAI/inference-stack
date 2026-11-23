@@ -114,11 +114,57 @@ case "$1 ${2:-}" in
     esac ;;
   "cp legacy-grafana:/var/lib/grafana/.")
     [ "$GRAFANA_COPY_FAILS" = false ] || exit 1
-    echo grafana-archive ;;
+    if [ -n "${GRAFANA_ARCHIVE:-}" ]; then cat "$GRAFANA_ARCHIVE"; else echo grafana-archive; fi ;;
   "compose run")
-    [ "$(cat)" = grafana-archive ] ;;
+    if [ -n "${GRAFANA_ARCHIVE:-}" ]; then
+      shift 9
+      script=$(printf '%s' "$1" | sed 's|^      data=/var/lib/grafana$|      data="$GRAFANA_VOLUME"|')
+      shift
+      /bin/sh -ec "$script" "$@"
+    else
+      [ "$(cat)" = grafana-archive ]
+    fi ;;
+  "compose up")
+    [ "${GRAFANA_UP_FAILS:-}" != yes ] ;;
 esac
 ''')
+
+    def grafana_migration(self):
+        self.checkout()
+        self.grafana_container()
+        source = self.root / 'grafana-source'
+        volume = self.root / 'grafana-volume'
+        source.mkdir()
+        volume.mkdir()
+        (volume / 'plugins').mkdir()
+        (volume / 'dashboards').mkdir()
+        self.env.update(GRAFANA_VOLUME=str(volume), GRAFANA_ARCHIVE=str(self.root / 'grafana.tar'))
+        self.tool('mountpoint', '[ "$1" = -q ] && [ "$2" = "$GRAFANA_VOLUME" ]\n')
+        return source, volume
+
+    def archive_grafana(self, source):
+        with tarfile.open(self.env['GRAFANA_ARCHIVE'], 'w') as tar:
+            tar.add(source, arcname='.')
+
+    def test_grafana_retry_refreshes_the_snapshot(self):
+        source, volume = self.grafana_migration()
+        (source / 'grafana.db').write_text('before failed upgrade')
+        (source / 'plugins').mkdir()
+        (source / 'plugins/old-plugin').touch()
+        self.archive_grafana(source)
+        self.env['GRAFANA_UP_FAILS'] = 'yes'
+        self.assertNotEqual(self.run_install().returncode, 0)
+        self.assertEqual((volume / 'grafana.db').read_text(), 'before failed upgrade')
+
+        (source / 'grafana.db').write_text('dashboard edited after restart')
+        (source / 'plugins/old-plugin').unlink()
+        self.archive_grafana(source)
+        del self.env['GRAFANA_UP_FAILS']
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((volume / 'grafana.db').read_text(), 'dashboard edited after restart')
+        self.assertFalse((volume / 'plugins/old-plugin').exists())
+        self.assertTrue((volume / 'dashboards').is_dir())
 
     def test_upgrade_migrates_grafana_before_recreating_services(self):
         self.bundle()
