@@ -142,7 +142,7 @@ def kubectl(*args):
     return run('/usr/local/bin/k3s', 'kubectl', *args)
 
 
-def proxy_config(host, launcher, litellm, grafana):
+def proxy_config(host, launcher, litellm, grafana, lens):
     return f"""map $http_upgrade $connection_upgrade {{ default upgrade; '' close; }}
 server {{
     listen 80 default_server;
@@ -156,27 +156,36 @@ server {{
     proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
+    proxy_set_header X-Lens-UI-Mount "";
     proxy_buffering off;
     proxy_read_timeout 120s;
     location = /litellm {{ return 302 /litellm/ui; }}
     location /litellm/ {{ proxy_pass http://{litellm}:4000; }}
     location = /grafana {{ return 302 /grafana/; }}
     location /grafana/ {{ proxy_pass http://{grafana}:80; }}
+    location ~ ^/(ui|auth|lens|v1/(traces|logs))(/|$) {{ proxy_pass http://{lens}:4318; }}
     location / {{ proxy_pass http://{launcher}:8080; }}
 }}
 """
 
 
+def lens_values(public_url):
+    if not re.fullmatch(r'https://[a-z0-9-]+\.cloudfront\.net', public_url):
+        raise RuntimeError('The HTTPS address is not a CloudFront hostname.')
+    return {'launcher': {'lensPublicUrl': public_url},
+            'lens': {'enabled': True, 'publicUrl': public_url, 'nodeSelector': {'inference-stack/role': 'control'}}}
+
+
 def chart_values(public_url, password, credentials):
     if len(password) < 20 or len(set(password)) < 5 or not re.fullmatch(r'[A-Za-z0-9_@%+=:,./!?~-]+', password):
         raise RuntimeError('Choose a password with at least 20 characters and five distinct characters.')
-    if not re.fullmatch(r'https://[a-z0-9-]+\.cloudfront\.net', public_url):
-        raise RuntimeError('The HTTPS address is not a CloudFront hostname.')
     control = {'inference-stack/role': 'control'}
+    lens = lens_values(public_url)
     return {
         'launcher': {'nodeSelector': control, 'adminSecret': 'inference-stack-admin',
-                     'awsCapacity': True, 'litellmPublicUrl': public_url + '/litellm', 'grafanaPublicUrl': public_url + '/grafana', 'lensPublicUrl': ''},
-        'lens': {'enabled': False},
+                     'awsCapacity': True, 'litellmPublicUrl': public_url + '/litellm', 'grafanaPublicUrl': public_url + '/grafana',
+                     **lens['launcher']},
+        'lens': lens['lens'],
         'litellm': {
             'nodeSelector': control, 'masterkey': credentials['masterkey'],
             'resources': {'requests': {'cpu': '500m', 'memory': '4Gi'}, 'limits': {'memory': '5Gi'}},
@@ -211,8 +220,12 @@ def configure_stack(public_url, password):
     write('/etc/inference-stack/values.json', json.dumps(values))
     run('/usr/local/bin/helm', 'upgrade', '--install', 'inference-stack', str(ROOT / 'charts/inference-stack'),
         '-n', 'inference', '-f', '/etc/inference-stack/values.json', '--wait', '--timeout', '20m')
+    return configure_proxy(public_url)
+
+
+def configure_proxy(public_url):
     addresses = []
-    for name in ('inference-stack-launcher', 'inference-stack-litellm', 'inference-stack-grafana'):
+    for name in ('inference-stack-launcher', 'inference-stack-litellm', 'inference-stack-grafana', 'inference-stack-lens'):
         addresses.append(json.loads(kubectl('get', 'service', name, '-n', 'inference', '-o', 'json'))['spec']['clusterIP'])
     write('/etc/nginx/sites-available/inference-stack', proxy_config(public_url.removeprefix('https://'), *addresses), 0o644)
     Path('/etc/nginx/sites-enabled/default').unlink(missing_ok=True)
@@ -225,6 +238,20 @@ def configure_stack(public_url, password):
     return addresses[0]
 
 
+def enable_lens():
+    os.environ['KUBECONFIG'] = '/etc/rancher/k3s/k3s.yaml'
+    helm = ('/usr/local/bin/helm',)
+    values = json.loads(run(*helm, 'get', 'values', 'inference-stack', '-n', 'inference', '-o', 'json'))
+    public_url = values['launcher']['litellmPublicUrl'].removesuffix('/litellm')
+    overrides = lens_values(public_url)
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / 'lens.json'
+        write(path, json.dumps(overrides))
+        run(*helm, 'upgrade', 'inference-stack', str(ROOT / 'charts/inference-stack'),
+            '-n', 'inference', '--reset-then-reuse-values', '-f', str(path), '--atomic', '--timeout', '20m')
+    configure_proxy(public_url)
+
+
 def configure_capacity(stack):
     region = os.environ['AWS_DEFAULT_REGION']
     config = {key: os.environ[name] for key, name in (
@@ -235,7 +262,7 @@ def configure_capacity(stack):
     config['hours'] = int(os.environ['STOP_AFTER_HOURS'])
     write('/etc/inference-stack/capacity.json', json.dumps(config))
     console = f'https://{region}.console.aws.amazon.com'
-    info = {'provider': 'aws', 'instance_type': 't3.large', 'region': region, 'hourly_usd': 0.0832,
+    info = {'provider': 'aws', 'instance_type': 't3.xlarge', 'region': region, 'hourly_usd': 0.1664,
             'delete_url': f'{console}/cloudformation/home?region={region}#/stacks/stackinfo?stackId={quote(stack, safe="")}' }
     write('/etc/inference-stack/public/info.json', json.dumps(info), 0o644)
     write('/etc/systemd/system/inference-stack-capacity.service', f"""[Unit]
@@ -357,6 +384,12 @@ if __name__ == '__main__':
             install_worker()
         except Exception:
             print('GPU setup failed. Inspect this worker through AWS Systems Manager.', flush=True)
+            raise SystemExit(1) from None
+    elif sys.argv[1:] == ['--enable-lens']:
+        try:
+            enable_lens()
+        except Exception:
+            print('Lens setup failed. Inspect the Helm release and nginx on this machine.', flush=True)
             raise SystemExit(1) from None
     else:
         main()

@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Inference Stack in Ohio. Starts with 0 models and 0 GPUs on a $0.0832/hour CPU machine. Choose GPUs and review their prices in the UI. Disk, IPv4 and network cost extra. Delete the stack to stop all charges.
+Description: Inference Stack in Ohio. Starts with 0 models and 0 GPUs on a $0.1664/hour CPU machine with Lens. Choose GPUs and review their prices in the UI. Disk, IPv4 and network cost extra. Delete the stack to stop all charges.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -82,10 +82,11 @@ Resources:
                   return {'GroupId': groups[0]['GroupId']}
               if ec2.meta.region_name != 'us-east-2':
                   raise ValueError('This release supports US East (Ohio). Choose us-east-2, then retry.')
-              instance = 't3.large'
+              instance = properties.get('InstanceType', 't3.large')
+              vcpus = 4 if instance == 't3.xlarge' else 2
               quota = boto3.client('service-quotas').get_service_quota(ServiceCode='ec2', QuotaCode='L-1216C47A')['Quota']['Value']
-              if quota < 2:
-                  raise ValueError('AWS needs 2 Standard on-demand vCPUs to run the launcher. Request an EC2 quota increase, then retry. No machine was launched.')
+              if quota < vcpus:
+                  raise ValueError(f'AWS needs {vcpus} Standard on-demand vCPUs to run the launcher. Request an EC2 quota increase, then retry. No machine was launched.')
               offerings = ec2.describe_instance_type_offerings(LocationType='availability-zone', Filters=[{'Name': 'instance-type', 'Values': [instance]}])['InstanceTypeOfferings']
               zones = sorted(row['Location'] for row in offerings)
               if not zones:
@@ -111,6 +112,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt PrerequisiteFunction.Arn
       Operation: Prepare
+      InstanceType: t3.xlarge
 
   Vpc:
     Type: AWS::EC2::VPC

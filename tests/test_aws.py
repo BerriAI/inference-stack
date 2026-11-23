@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tarfile
 import tempfile
@@ -105,6 +106,49 @@ class BootstrapTests(unittest.TestCase):
                 bootstrap.chart_values(host, 'test-only-admin-password-0123456789', credentials)
         self.assertFalse(self.root.exists())
 
+    def test_lens_uses_cloudfront_for_its_launcher_link_and_exporter_endpoint(self):
+        public_url = 'https://example.cloudfront.net'
+        credentials = {'masterkey': 'test-only-generated-masterkey', 'database': 'test-only-generated-database'}
+        values = bootstrap.chart_values(public_url, 'test-only-admin-password-0123456789', credentials)
+        self.assertTrue(values['lens']['enabled'])
+        self.assertEqual(values['lens']['publicUrl'], public_url)
+        self.assertEqual(values['launcher']['lensPublicUrl'], public_url)
+        self.assertFalse(values['lens'].get('gateway', {}).get('enabled', False))
+
+        cache = TEMPLATE['Resources']['Distribution']['Properties']['DistributionConfig']['DefaultCacheBehavior']
+        self.assertIn('POST', cache['AllowedMethods'])
+        self.assertIn('DELETE', cache['AllowedMethods'])
+        self.assertEqual(cache['CachePolicyId'], '4135ea2d-6df8-44a3-9df3-4b5a84be39ad')  # CachingDisabled
+        self.assertEqual(cache['OriginRequestPolicyId'], 'b689b0a8-53d0-40ab-baf2-68738e2966ac')  # AllViewerExceptHostHeader
+
+        config = bootstrap.proxy_config('example.cloudfront.net', '10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4')
+        pattern = re.search(r'location ~ (\S+) \{ proxy_pass http://10\.0\.0\.4:4318; \}', config)[1]
+        for path in ('/ui', '/ui/', '/ui/_next/static/app.js', '/auth/session', '/auth/methods',
+                     '/v1/traces', '/v1/logs', '/v1/traces/receipt', '/v1/logs/id', '/lens/admin/tracing/keys'):
+            self.assertRegex(path, pattern)
+        for path in ('/', '/api/status', '/litellm/ui', '/grafana/', '/internal/read', '/v1/chat/completions', '/v1/traces-other'):
+            self.assertNotRegex(path, pattern)
+
+    def test_existing_aws_install_upgrades_only_lens_values_and_reuses_its_own_chart(self):
+        public_url = 'https://example.cloudfront.net'
+        def helm(*args):
+            if args[1] == 'get':
+                return json.dumps({'launcher': {'litellmPublicUrl': public_url + '/litellm'}})
+            self.assertEqual(args[:6], ('/usr/local/bin/helm', 'upgrade', 'inference-stack',
+                                      str(self.root / 'charts/inference-stack'), '-n', 'inference'))
+            self.assertIn('--reset-then-reuse-values', args)
+            self.assertIn('--atomic', args)
+            overrides = json.loads(Path(args[args.index('-f') + 1]).read_text())
+            self.assertEqual(set(overrides), {'lens', 'launcher'})
+            self.assertEqual(overrides['launcher'], {'lensPublicUrl': public_url})
+            self.assertEqual(overrides['lens'], bootstrap.lens_values(public_url)['lens'])
+
+        with patch.dict(os.environ), patch.object(bootstrap, 'run', side_effect=helm) as run, \
+             patch.object(bootstrap, 'configure_proxy') as proxy:
+            bootstrap.enable_lens()
+        self.assertEqual(run.call_count, 2)
+        proxy.assert_called_once_with(public_url)
+
     def test_command_errors_hide_raw_output(self):
         with patch.object(bootstrap.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stdout='private-value', stderr='private-value')):
             with self.assertRaises(RuntimeError) as error:
@@ -147,6 +191,14 @@ class PrerequisiteTests(unittest.TestCase):
         self.assertEqual(TEMPLATE['Resources']['GpuGroup']['Properties']['DesiredCapacity'], '0')
         self.assertEqual(result['Zone'], 'us-east-2a')
         self.assertEqual(TEMPLATE['Resources']['StopSchedule']['Properties']['State'], 'DISABLED')
+
+    def test_new_install_checks_cpu_quota_for_lens_sized_launcher(self):
+        properties = TEMPLATE['Resources']['Prerequisites']['Properties']
+        self.quotas.get_service_quota.return_value = {'Quota': {'Value': 2}}
+        with self.assertRaisesRegex(ValueError, 'needs 4 Standard on-demand vCPUs'):
+            self.code['prepare'](properties)
+        self.quotas.get_service_quota.return_value = {'Quota': {'Value': 4}}
+        self.assertEqual(self.code['prepare'](properties)['InstanceType'], 't3.xlarge')
 
     def test_wrong_region_fails_before_using_ohio_price(self):
         self.ec2.meta.region_name = 'us-west-2'
