@@ -1,4 +1,4 @@
-"""Exercise Helm's saved-value merge on a disposable kind cluster; no GPUs or model pulls."""
+"""Exercise Helm upgrades on a disposable kind cluster; no GPUs or model pulls."""
 import copy
 import json
 import os
@@ -17,6 +17,82 @@ from test_launcher import app
 
 @unittest.skipUnless(os.environ.get("INFERENCE_STACK_TEST_KUBECONFIG"), "Requires a disposable kind cluster")
 class HelmUpgradeTests(unittest.TestCase):
+    def test_bundled_postgresql_upgrade_preserves_data_and_credentials(self):
+        env = {**os.environ, "KUBECONFIG": os.environ["INFERENCE_STACK_TEST_KUBECONFIG"]}
+        context = subprocess.check_output(["kubectl", "config", "current-context"], env=env, text=True).strip()
+        self.assertTrue(context.startswith("kind-inference-stack-"), "Use a disposable Inference Stack kind cluster")
+
+        namespace = "inference-stack-postgresql-upgrade-tests"
+        name = "stack-pg-upgrade"
+        database = f"{name}-postgresql"
+        pod = f"{database}-0"
+        claim = f"data-{pod}"
+        password = "test-only-database-password-0123456789"
+        values = {
+            "litellm": {
+                "replicaCount": 0,
+                "migrationJob": {"enabled": False},
+                "postgresql": {"auth": {"password": password, "postgres-password": "test-only-database-admin-0123456789"}},
+            },
+            "launcher": {"nodeSelector": {"inference-stack-test": "unscheduled"}},
+            "lens": {"enabled": False},
+            "grafana": {"replicas": 0, "rbac": {"create": False}},
+            "prometheus": {"server": {"enabled": False}},
+        }
+
+        def run(args, values=None):
+            result = subprocess.run(args, env=env, input=json.dumps(values) if values is not None else None,
+                                    capture_output=True, text=True, timeout=210)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.strip()
+
+        def kubectl(*args):
+            return run(["kubectl", "-n", namespace, *args])
+
+        def get(kind, name):
+            return json.loads(kubectl("get", kind, name, "-o", "json"))
+
+        def sql(statement):
+            return kubectl("exec", pod, "--", "env", f"PGPASSWORD={password}", "psql", "-XAt",
+                           "-v", "ON_ERROR_STOP=1", "-h", "127.0.0.1", "-U", "litellm", "-d", "litellm",
+                           "-c", statement)
+
+        chart = Path(__file__).resolve().parents[1] / "charts/inference-stack"
+        with tempfile.TemporaryDirectory() as directory:
+            old = Path(directory) / "old"
+            shutil.copytree(chart, old)
+            dependencies = old / "charts"
+            (dependencies / "litellm-helm-1.110.2.tgz").unlink()
+            run(["helm", "pull", "oci://ghcr.io/berriai/litellm-helm", "--version", "1.110.2",
+                 "--destination", str(dependencies)])
+
+            try:
+                run(["helm", "install", name, str(old), "-n", namespace, "--create-namespace", "--no-hooks",
+                     "-f", "-"], values)
+                kubectl("rollout", "status", f"statefulset/{database}", "--timeout=180s")
+                before = get("statefulset", database)["metadata"]
+                self.assertEqual(before["labels"]["helm.sh/chart"], "postgresql-14.3.1")
+                old_pod = get("pod", pod)["metadata"]["uid"]
+                old_claim = get("pvc", claim)["metadata"]["uid"]
+                old_credentials = get("secret", database)["data"]
+                self.assertEqual(sql("SELECT current_setting('server_version_num')::int / 10000"), "16")
+                sql("CREATE TABLE upgrade_check (id int PRIMARY KEY, note text);"
+                    "INSERT INTO upgrade_check VALUES (1, 'before'), (2, 'retained');")
+
+                run(["helm", "upgrade", name, str(chart), "-n", namespace, "--reset-then-reuse-values", "--no-hooks"])
+                kubectl("rollout", "status", f"statefulset/{database}", "--timeout=180s")
+                after = get("statefulset", database)["metadata"]
+                self.assertEqual(after["labels"]["helm.sh/chart"], "postgresql-18.12.27")
+                self.assertEqual(after["uid"], before["uid"])
+                self.assertNotEqual(get("pod", pod)["metadata"]["uid"], old_pod)
+                self.assertEqual(get("pvc", claim)["metadata"]["uid"], old_claim)
+                self.assertTrue(get("secret", database)["data"] == old_credentials, "Database credentials changed")
+                self.assertEqual(sql("SELECT current_setting('server_version_num')::int / 10000"), "16")
+                self.assertEqual(sql("SELECT * FROM upgrade_check ORDER BY id"), "1|before\n2|retained")
+            finally:
+                run(["helm", "uninstall", name, "-n", namespace, "--no-hooks", "--ignore-not-found"])
+                kubectl("delete", "namespace", namespace, "--ignore-not-found", "--timeout=60s")
+
     def test_current_defaults_and_explicit_overrides_survive_all_launcher_upgrade_paths(self):
         env = {**os.environ, "KUBECONFIG": os.environ["INFERENCE_STACK_TEST_KUBECONFIG"]}
         context = subprocess.check_output(["kubectl", "config", "current-context"], env=env, text=True).strip()

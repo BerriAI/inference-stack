@@ -222,6 +222,32 @@ helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases
 
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
 
+**Updating the bundled PostgreSQL chart**
+
+The PostgreSQL subchart upgrade from 14.3.1 to 18.12.27 restarts PostgreSQL, so
+plan for a short database outage. Inference Stack still runs the same pinned
+Bitnami Legacy PostgreSQL 16.2 image against the same StatefulSet and data PVC.
+Back up the database, then use `helm upgrade` with `--reset-then-reuse-values`
+so Helm retains your saved settings and credentials while picking up the new
+chart defaults. Do not uninstall the release or delete the PVC. A stock
+install does not need a dump and restore for this chart upgrade.
+If you are updating from a source checkout, run
+`helm dependency build charts/inference-stack` before upgrading.
+
+Do not remove the PostgreSQL 16 image pin on a PVC created by PostgreSQL 16.
+The new upstream chart advertises PostgreSQL 18.7, which cannot open a
+PostgreSQL 16 data directory. Moving to another PostgreSQL major requires a
+separate migration, such as dumping from the running PostgreSQL 16 server and
+restoring into a new database on a new volume. The bundled image is a legacy
+image and this chart upgrade does not update the server or address image CVEs.
+
+If you use custom PostgreSQL images, init scripts, or volume mounts, test
+them before upgrading. The new chart uses read-only root filesystems, runs
+the main container with group 1001, and mounts passwords from Secrets by
+default. Inference Stack allows its pinned legacy image through Bitnami's
+image check only for the PostgreSQL subchart. Keep any existing custom image
+on the major version that wrote your data.
+
 For AWS, launch a new stack with this release and a different stack name. Deploy your models and create application keys there. Keep the original installation until requests work in the new one, then [delete the original stack](#aws). Updating only the launcher image does not update its AWS infrastructure.
 
 To enable only Lens on an existing AWS v0.4.0 install, keep the current CloudFormation stack. Take a backup and check CPU, memory and disk headroom before enabling Lens. Use Systems Manager to connect to the launcher and run the verified bootstrap below. It uses the chart already installed on the instance and keeps the existing release values, instance, credentials and disks. On a `t3.large`, it saves a CPU request of 50m each for Lens and ClickHouse unless you have set your own requests. If GPU nodes are running, cordon them before enabling Lens so ClickHouse's local volume is placed on the launcher, then uncordon them after ClickHouse is ready.

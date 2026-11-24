@@ -16,6 +16,9 @@ separately installed components retain their own licenses and trademarks.
 - Container images and Helm dependencies are distributed by their upstream
   projects under their respective licenses. In particular, the MIT license for
   this repository does not change Grafana's AGPL-3.0 license.
+- `charts/vendor/litellm-helm/` contains the LiteLLM Helm chart under MIT,
+  copyright 2023 Berri AI. The bundled Bitnami charts retain their Apache-2.0
+  license and upstream notices.
 
 ## Apache License 2.0
 
