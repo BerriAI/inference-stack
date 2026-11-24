@@ -144,7 +144,7 @@ services:
     security_opt: [no-new-privileges:true]
 
   clickhouse:
-    image: clickhouse/clickhouse-server:26.9.6.6@sha256:eb4870e7ca7ed70c259eebfcfbee6cf797017f6b5436c2926bbbfe3d4d28486e
+    image: clickhouse/clickhouse-server:26.10.12.13@sha256:15365147d687bb5682ea3d5d02d6c62a625c55846bc907900d255e7f491e6816
     environment:
       CLICKHOUSE_USER: lens
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD to a generated password}

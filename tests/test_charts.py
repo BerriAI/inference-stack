@@ -49,7 +49,9 @@ class ChartTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
     def test_lens_runs_standalone_by_default_and_launcher_links_to_it(self):
-        chart = Path(__file__).resolve().parents[1] / "charts/inference-stack"
+        root = Path(__file__).resolve().parents[1]
+        chart = root / "charts/inference-stack"
+        compose = yaml.safe_load((root / "compose/docker-compose.yaml").read_text())
         auth = {"litellm": {"postgresql": {"auth": {"password": "test-only-database-password-0123456789", "postgres-password": "test-only-database-admin-0123456789"}}}}
         for enabled in (True, False):
             values = {**auth, **({} if enabled else {"lens": {"enabled": False}})}
@@ -64,6 +66,9 @@ class ChartTests(unittest.TestCase):
             if not enabled:
                 self.assertEqual(environment["LENS_PUBLIC_URL"], "")
                 continue
+            clickhouse = next(r for r in resources if r["kind"] == "StatefulSet" and r["metadata"]["name"] == "inference-stack-lens-clickhouse")
+            self.assertEqual(clickhouse["spec"]["template"]["spec"]["containers"][0]["image"],
+                             compose["services"]["clickhouse"]["image"])
             service = next(r for r in resources if r["kind"] == "Service" and r["metadata"]["name"] == "inference-stack-lens")
             self.assertEqual(environment["LENS_URL"], f"http://inference-stack-lens:{service['spec']['ports'][0]['port']}")
             self.assertEqual(environment["LENS_PUBLIC_URL"], "http://localhost:4318")
