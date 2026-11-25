@@ -1,6 +1,6 @@
 # Run Inference Stack
 
-Run on AWS, one machine with Docker Compose, or an existing Kubernetes cluster. Deploy a Hugging Face model with vLLM. LiteLLM lets you manage models and send requests through one API or Chat. llm-d selects a replica using cache and queue signals; Grafana shows metrics collected by Prometheus.
+Run on AWS, one machine with Docker Compose, or an existing Kubernetes cluster. Deploy a Hugging Face model with vLLM. LiteLLM lets you manage models and send requests through one API or Chat. llm-d selects a replica using cache and queue signals. Lens shows agent traces; Grafana shows metrics collected by Prometheus.
 
 [Docker Compose](#docker-compose) · [Kubernetes](#kubernetes) · [AWS](#aws) · [Your first request](#your-first-request) · [Configuration](#configuration) · [Update](#update) · [Recovery and cleanup](#recovery-and-cleanup) · [Development](#development)
 
@@ -9,7 +9,7 @@ Run on AWS, one machine with Docker Compose, or an existing Kubernetes cluster. 
 Use this path for one machine. You need Docker with Compose, curl, and OpenSSL. Real models also need an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). You can try the flow without a GPU using simulation.
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.4.0/install.sh | bash -s -- docker
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.4.1/install.sh | bash -s -- docker
 ```
 
 The installer verifies the release bundle, extracts it into `./inference-stack`, generates a private `compose/.env`, and starts the prebuilt stack. To choose another directory, export `INFERENCE_STACK_DIR` before running it. An existing installation and its credentials are reused.
@@ -25,7 +25,7 @@ All published ports bind to `127.0.0.1`. The launcher controls Docker, so keep l
 Use this path for a cluster. You need Helm 3.14 or later, `kubectl`, curl, OpenSSL, and permission to install the stack's resources. Confirm that `kubectl config current-context` selects the intended cluster. Real models need GPU nodes with the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html). Simulation does not require GPUs.
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.4.0/install.sh | bash -s -- kubernetes
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.4.1/install.sh | bash -s -- kubernetes
 ```
 
 The installer verifies and extracts the release into `./inference-stack`, installs the stack in namespace `inference` with generated credentials, waits for readiness, and forwards the launcher, LiteLLM, Grafana, and Lens to localhost. Leave the terminal open; Ctrl-C closes these connections while the stack keeps running. Running the command again reconnects to an existing healthy release without changing its values.
@@ -40,18 +40,18 @@ Use a dedicated namespace: the launcher has deployment access there, including a
 
 AWS installs the stack in your own account. You need a paid AWS account with permission to create the resources in the launch template; AWS bills your account directly.
 
-The template in `aws/stack.yaml` starts with **0 models and 0 GPUs**. It creates a `t3.large` CPU machine in US East (Ohio) for the launcher, LiteLLM, Grafana, and a small Kubernetes cluster. Add GPU machines from the launcher when you need them.
+The template in `aws/stack.yaml` starts with **0 models and 0 GPUs**. It creates a `t3.xlarge` CPU machine in US East (Ohio) for the launcher, LiteLLM, Lens, Grafana, and a small Kubernetes cluster. Add GPU machines from the launcher when you need them.
 
 To start:
 
-1. Open [Launch on AWS](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/create/review?templateURL=https%3A%2F%2Finference-stack-release-templates-templates-e0eqnr6ih8gk.s3.us-east-2.amazonaws.com%2Freleases%2Fv0.4.0%2Faws-stack.yaml&stackName=inference-stack). Sign into the AWS account that will own and pay for the installation.
+1. Open [Launch on AWS](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/create/review?templateURL=https%3A%2F%2Finference-stack-release-templates-templates-e0eqnr6ih8gk.s3.us-east-2.amazonaws.com%2Freleases%2Fv0.4.1%2Faws-stack.yaml&stackName=inference-stack). Sign into the AWS account that will own and pay for the installation.
 2. Enter an **Admin password** of at least 20 characters. Keep the other defaults, review the cost, acknowledge the IAM permissions, and choose **Create stack**.
 3. Wait for `CREATE_COMPLETE`, then open **Outputs → OpenInferenceStack**. Sign in as `admin` with that password. The homepage shows **0 deployments · 0 GPUs**.
 4. Open **Deployments**, choose a model, and review its GPU allocation. If capacity is needed, select an **AWS GPU**, review its memory and hourly price, and choose **Add GPU and deploy**. You can also add GPUs separately from **GPUs**.
 5. Wait for the GPU and model to become ready. Leave the page and return while setup continues; progress is retained.
 6. When the model is **Ready**, choose **Try in LiteLLM**. Sign in as `admin` with the same password. In **Chat**, select the API model name shown on the deployment page and send a message. A model response confirms your first request.
 
-The launcher costs $0.0832/hour for compute and has a 40 GB disk. The GPU picker lists supported NVIDIA machines offered in the installation’s availability zone, with GPU count, memory, and current On-Demand price per machine. Choose up to four machines, including different GPU types; each gets a 200 GB disk. Disk, public IPv4, network, and other AWS charges are additional. The launcher keeps running when there are no GPUs.
+The launcher costs $0.1664/hour for compute, requires 4 Standard On-Demand vCPUs, and has a 40 GB disk. The GPU picker lists supported NVIDIA machines offered in the installation’s availability zone, with GPU count, memory, and current On-Demand price per machine. Choose up to four machines, including different GPU types; each gets a 200 GB disk. Disk, public IPv4, network, and other AWS charges are additional. The launcher keeps running when there are no GPUs.
 
 **GPU quota:** the launcher checks the selected machine’s vCPU requirement against your remaining regional G/VT or P instance quota. If more quota is needed, choose **AWS quotas** to open the relevant limit in Service Quotas. AWS confirms spare capacity at launch; a failed launch appears on the GPUs page and can be cancelled before choosing another type.
 
@@ -79,13 +79,22 @@ A response confirms the path from LiteLLM through llm-d to the model server. Sim
 | Grafana | http://localhost:3000 |
 | Lens | http://localhost:4318/ui/ |
 
-LiteLLM and Grafana open in new tabs. Use **Replica scheduling → Settings** to adjust inference scheduling, and **Grafana** to inspect the stack overview.
+LiteLLM, Lens, and Grafana open in new tabs. Use **Replica scheduling → Settings** to adjust inference scheduling, and **Grafana** to inspect the stack overview.
 
 ### Agent traces with Lens
 
-Lens 0.4.0 runs standalone next to LiteLLM, with its own ClickHouse storage and 14 days of retention. Open **Lens · Agent traces** on the launcher home and sign in with the Lens admin token: `LENS_ADMIN_TOKEN` in `compose/.env`, or the `admin-token` field of Secret `inference-stack-lens-admin` on Kubernetes. On **Home**, choose **Standalone Lens**, pick Claude Code, Codex or OpenCode, and choose **Copy instructions with new key**: Lens creates a tracing key and copies setup instructions for that agent. Any other OTLP exporter sends traces to `http://localhost:4318/v1/traces` and logs to `http://localhost:4318/v1/logs` with `Authorization: Bearer <tracing key>`. See [Claude Code telemetry](https://github.com/BerriAI/lens/blob/v0.4.0/docs/claude-code.md#standalone-lens) for the full variable list.
+Lens 0.4.0 runs standalone next to LiteLLM, with its own ClickHouse storage and 14 days of retention. Open **Lens** on the launcher home and sign in with the Lens admin token: `LENS_ADMIN_TOKEN` in `compose/.env`, or the `admin-token` field of Secret `inference-stack-lens-admin` on Kubernetes and AWS. On AWS, open **EC2 → Instances**, select the stack's launcher, and choose **Connect → Session Manager**. Read the token in that terminal:
 
-Agents keep sending model calls to LiteLLM. LiteLLM's own gateway does not accept agent traces in this release, so send them to Lens directly. Lens is not installed on AWS yet; the AWS launcher hides the link. To turn Lens off on Kubernetes, set `lens.enabled=false`; for a Lens address beyond port-forwarding, set `lens.publicUrl` and `launcher.lensPublicUrl` to the address browsers open.
+```bash
+sudo k3s kubectl get secret inference-stack-lens-admin -n inference \
+  -o jsonpath='{.data.admin-token}' | base64 --decode
+```
+
+Keep this token private.
+
+On **Home**, choose **Standalone Lens**, pick Claude Code, Codex or OpenCode, and choose **Copy instructions with new key**: Lens creates a tracing key and copies setup instructions for that agent. Any other OTLP exporter sends traces to `/v1/traces` and logs to `/v1/logs` with `Authorization: Bearer <tracing key>`. Use the launcher's CloudFront HTTPS address on AWS or `http://localhost:4318` for local Docker or port-forwarded Kubernetes. See [Claude Code telemetry](https://github.com/BerriAI/lens/blob/v0.4.0/docs/claude-code.md#standalone-lens) for the full variable list.
+
+Agents keep sending model calls to LiteLLM. LiteLLM's own gateway does not accept agent traces in this release, so send them to Lens directly. To turn Lens off on Kubernetes, set `lens.enabled=false`; for a Lens address beyond port-forwarding, set `lens.publicUrl` and `launcher.lensPublicUrl` to the address browsers open.
 
 ## Configuration
 
@@ -135,7 +144,7 @@ For dashboards hosted beyond port-forwarding, set `launcher.litellmPublicUrl`, `
 | Admin password | AWS launcher, LiteLLM, and Grafana sign-in | Chosen during AWS setup |
 | LiteLLM master key | Docker/Kubernetes launcher and LiteLLM admin login | Compose `.env`, or the generated Kubernetes Secret described above |
 | Postgres passwords | Stack services | Generated during installation |
-| Lens admin token | Lens sign-in | Compose `.env`, or Secret `inference-stack-lens-admin` on Kubernetes |
+| Lens admin token | Lens sign-in | Compose `.env`, or Secret `inference-stack-lens-admin` on Kubernetes and AWS |
 | Virtual key | Application requests | Create in the LiteLLM dashboard |
 
 To use a separate launcher password, set `LAUNCHER_PASSWORD` in the launcher's container environment. It must be a generated value of at least 20 characters. Keep the existing database and gateway credentials when restarting an installation.
@@ -194,12 +203,12 @@ Database persistent volumes may remain; manage them separately according to your
 
 ## Update
 
-Keep your existing credentials and volumes when updating to v0.4.0. Use the instructions for your installation method.
+Keep your existing credentials and volumes when updating to v0.4.1. Use the instructions for your installation method.
 
 For Docker, rerun the installer from the directory containing `inference-stack`. It keeps `.env`, volumes and routing settings, recreates changed services, and keeps the previous recipe as a backup:
 
 ```bash
-curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.4.0/install.sh | bash -s -- docker
+curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.4.1/install.sh | bash -s -- docker
 ```
 
 When updating a Docker install that predates the Grafana volume, run the installer before removing or recreating the old Grafana container. The installer copies its dashboards and other Grafana data into the new volume. A stopped container can still be migrated.
@@ -207,8 +216,8 @@ When updating a Docker install that predates the Grafana volume, run the install
 For an existing Kubernetes cluster, update the chart while retaining your explicitly set values and accepting the new chart defaults:
 
 ```bash
-helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.4.0/inference-stack-0.4.0.tgz \
-  --namespace inference --reset-then-reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.4.0 --wait
+helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.4.1/inference-stack-0.4.1.tgz \
+  --namespace inference --reset-then-reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.4.1 --wait
 ```
 
 Use `--reset-then-reuse-values` rather than `--reuse-values` when upgrading to Prometheus chart 30.0.0. Reusing the old defaults can load duplicate scrape jobs and prevent Prometheus from starting. If you explicitly configured `prometheus.serverFiles."prometheus.yml".scrape_configs`, migrate those jobs to `prometheus.scrapeConfigs` first; see the [upstream migration notes](https://github.com/prometheus-community/helm-charts/blob/prometheus-30.0.0/charts/prometheus/README.md#to-280).
@@ -216,6 +225,20 @@ Use `--reset-then-reuse-values` rather than `--reuse-values` when upgrading to P
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
 
 For AWS, launch a new stack with this release and a different stack name. Deploy your models and create application keys there. Keep the original installation until requests work in the new one, then [delete the original stack](#aws). Updating only the launcher image does not update its AWS infrastructure.
+
+To enable only Lens on an existing AWS v0.4.0 install, keep the current CloudFormation stack. Take a backup and check CPU, memory and disk headroom before enabling Lens. Use Systems Manager to connect to the launcher and run the verified bootstrap below. It uses the chart already installed on the instance and keeps the existing release values, instance, credentials and disks. On a `t3.large`, it saves a CPU request of 50m each for Lens and ClickHouse unless you have set your own requests. If GPU nodes are running, cordon them before enabling Lens so ClickHouse's local volume is placed on the launcher, then uncordon them after ClickHouse is ready.
+
+```bash
+release=https://github.com/BerriAI/inference-stack/releases/download/v0.4.1
+lens_update_dir=$(mktemp -d)
+cd "$lens_update_dir"
+curl -fsSLO "$release/aws-bootstrap.py" &&
+curl -fsSLO "$release/SHA256SUMS" &&
+awk '$2 == "aws-bootstrap.py"' SHA256SUMS | sha256sum --check &&
+sudo python3 aws-bootstrap.py --enable-lens
+```
+
+Open **Lens** from the launcher and confirm that it loads. Existing GPU machines and model deployments stay in place.
 
 ## Deploy with your agent
 
@@ -225,8 +248,8 @@ Copy the prompt for your environment:
 <summary>Docker Compose</summary>
 
 ```text
-Set up Inference Stack v0.4.0 on this machine with Docker Compose.
-Read https://github.com/BerriAI/inference-stack/blob/v0.4.0/docs/setup.md
+Set up Inference Stack v0.4.1 on this machine with Docker Compose.
+Read https://github.com/BerriAI/inference-stack/blob/v0.4.1/docs/setup.md
 and inspect its release installer before running it. Check prerequisites,
 preserve any existing installation and credentials, and keep secrets out
 of chat and logs. Start the stack, verify its health, and open the launcher.
@@ -240,8 +263,8 @@ If no GPU is available, offer simulation and identify its canned response.
 <summary>Kubernetes</summary>
 
 ```text
-Set up Inference Stack v0.4.0 in Kubernetes.
-Read https://github.com/BerriAI/inference-stack/blob/v0.4.0/docs/setup.md
+Set up Inference Stack v0.4.1 in Kubernetes.
+Read https://github.com/BerriAI/inference-stack/blob/v0.4.1/docs/setup.md
 and inspect its release installer before running it. Confirm the current
 cluster is the intended target, check permissions and GPU capacity, and
 preserve existing releases and credentials. Keep secrets out of chat and
@@ -256,8 +279,8 @@ Use simulation only if I choose it. Ask before provisioning paid resources.
 <summary>AWS</summary>
 
 ```text
-Set up Inference Stack v0.4.0 in my AWS account.
-Read https://github.com/BerriAI/inference-stack/blob/v0.4.0/docs/setup.md#aws
+Set up Inference Stack v0.4.1 in my AWS account.
+Read https://github.com/BerriAI/inference-stack/blob/v0.4.1/docs/setup.md#aws
 and inspect the release template. Confirm the account, permissions, and
 cost before creating the stack. Keep credentials out of chat and logs.
 Open the empty launcher, help me choose a GPU and model, and ask before
