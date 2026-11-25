@@ -27,7 +27,7 @@ services:
       retries: 10
 
   litellm:
-    image: ghcr.io/berriai/litellm:v1.110.4
+    image: ghcr.io/berriai/litellm:v1.111.0@sha256:ce00096d012719d58c52cecfa373f7c6256dd1b0ff08f6fa607e10e9628f1f46
     command: ["--config", "/app/config/config.yaml", "--port", "4000"]
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY to a generated password}

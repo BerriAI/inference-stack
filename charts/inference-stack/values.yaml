@@ -17,6 +17,8 @@ launcher:
   awsCapacity: false
 
 litellm:
+  image:
+    tag: "v1.111.0@sha256:ce00096d012719d58c52cecfa373f7c6256dd1b0ff08f6fa607e10e9628f1f46"
   postgresql:
     auth:
       # Supply generated passwords at install time; Helm stores them in Secrets.
