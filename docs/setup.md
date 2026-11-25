@@ -220,7 +220,7 @@ helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases
   --namespace inference --reset-then-reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.4.1 --wait
 ```
 
-Use `--reset-then-reuse-values` rather than `--reuse-values` when upgrading to Prometheus chart 30.0.0. Reusing the old defaults can load duplicate scrape jobs and prevent Prometheus from starting. If you explicitly configured `prometheus.serverFiles."prometheus.yml".scrape_configs`, migrate those jobs to `prometheus.scrapeConfigs` first; see the [upstream migration notes](https://github.com/prometheus-community/helm-charts/blob/prometheus-30.0.0/charts/prometheus/README.md#to-280).
+Use `--reset-then-reuse-values` rather than `--reuse-values` when upgrading to Prometheus chart 30.0.1. Reusing the old defaults can load duplicate scrape jobs and prevent Prometheus from starting. If you explicitly configured `prometheus.serverFiles."prometheus.yml".scrape_configs`, migrate those jobs to `prometheus.scrapeConfigs` first; see the [upstream migration notes](https://github.com/prometheus-community/helm-charts/blob/prometheus-30.0.1/charts/prometheus/README.md#to-280).
 
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
 
