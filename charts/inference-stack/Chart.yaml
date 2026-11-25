@@ -13,7 +13,7 @@ dependencies:
     version: 27.3.0
     repository: https://prometheus-community.github.io/helm-charts
   - name: grafana
-    version: 14.5.0
+    version: 14.6.0
     repository: https://grafana-community.github.io/helm-charts
   - name: lens
     version: 0.4.0

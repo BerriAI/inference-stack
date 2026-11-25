@@ -7,9 +7,9 @@ dependencies:
   version: 27.3.0
 - name: grafana
   repository: https://grafana-community.github.io/helm-charts
-  version: 14.5.0
+  version: 14.6.0
 - name: lens
   repository: oci://ghcr.io/berriai/charts
   version: 0.4.0
-digest: sha256:0cabae4209c0d0ec4a437d049e624b231b051d18f8c5023d4979f2e6b7692bf9
-generated: "2026-11-23T17:15:26.509740325Z"
+digest: sha256:0b29b95eced57b42185eb5e8aa165a34234f6609b911722b48b1256dd7a400d5
+generated: "2026-11-25T16:56:29.248927691Z"

@@ -18,6 +18,7 @@ class ChartTests(unittest.TestCase):
         compose_image = compose["services"]["grafana"]["image"]
         result = subprocess.run(
             ["helm", "template", "inference-stack", str(chart),
+             "--set", "grafana.persistence.enabled=true",
              "--set-string", "litellm.postgresql.auth.password=test-only-database-password-0123456789",
              "--set-string", "litellm.postgresql.auth.postgres-password=test-only-database-admin-0123456789"],
             text=True, capture_output=True, timeout=20, check=True,
@@ -26,6 +27,8 @@ class ChartTests(unittest.TestCase):
         pod = resources["Deployment", "inference-stack-grafana"]["spec"]["template"]["spec"]
         grafana = next(c for c in pod["containers"] if c["name"] == "grafana")
         self.assertEqual(grafana["image"].removeprefix("docker.io/").removesuffix("-distroless"), compose_image)
+        init_chown = next(c for c in pod["initContainers"] if c["name"] == "init-chown-data")
+        self.assertRegex(init_chown["image"], r"^docker\.io/library/busybox:1\.36\.1@sha256:[0-9a-f]{64}$")
 
         provisioning = resources["ConfigMap", "inference-stack-grafana"]["data"]
         provider = yaml.safe_load(provisioning["dashboardproviders.yaml"])["providers"][0]
