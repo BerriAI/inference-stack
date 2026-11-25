@@ -255,6 +255,9 @@ exec /bin/cp "$@"
         self.assertEqual(values['LITELLM_MASTER_KEY'], 'sk-existing-key-0123456789abcdef')
         self.assertEqual({len(values['LENS_ADMIN_TOKEN']), len(values['CLICKHOUSE_PASSWORD'])}, {64})
         self.assertNotEqual(values['LENS_ADMIN_TOKEN'], values['CLICKHOUSE_PASSWORD'])
+        lens_credentials = [values['LITELLM_LENS_SERVICE_TOKEN'], values['LENS_GATEWAY_SECRET']]
+        self.assertEqual({len(value) for value in lens_credentials}, {64})
+        self.assertEqual(len(set(lens_credentials)), 2)
         before = env.read_text()
         self.assertEqual(self.run_install().returncode, 0)
         self.assertEqual(before, env.read_text())

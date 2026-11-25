@@ -152,12 +152,12 @@ if [[ "$mode" == docker ]]; then
     (umask 077; set -C; printf 'LITELLM_MASTER_KEY=sk-%s\nPOSTGRES_PASSWORD=%s\nINFERENCE_STACK_LAUNCHER_IMAGE=%s\n' \
       "$(openssl rand -hex 24)" "$(openssl rand -hex 24)" "$image" > .env)
   fi
-  for name in LENS_ADMIN_TOKEN CLICKHOUSE_PASSWORD; do
+  for name in LENS_ADMIN_TOKEN CLICKHOUSE_PASSWORD LITELLM_LENS_SERVICE_TOKEN LENS_GATEWAY_SECRET; do
     grep -q "^$name=" .env || printf '%s=%s\n' "$name" "$(openssl rand -hex 32)" >> .env
   done
   migrate_grafana_data
   docker compose up -d --no-build --wait </dev/null
-  printf '\nOpen http://localhost:8080\nSign in as admin with LITELLM_MASTER_KEY from compose/.env.\nChoose Deployments to deploy a model, or enable simulation in its Settings.\nAgent traces: open http://localhost:4318/ui/ and sign in with LENS_ADMIN_TOKEN from compose/.env.\n'
+  printf '\nOpen http://localhost:8080\nSign in as admin with LITELLM_MASTER_KEY from compose/.env.\nChoose Deployments to deploy a model, or enable simulation in its Settings.\nAgent traces: open http://localhost:4000/ui/lens/ and sign in to LiteLLM.\n'
 else
   existing="$(helm list --namespace inference --deployed --failed --pending --uninstalled --superseded --uninstalling --filter '^inference-stack$' --short)"
   if [[ -n "$existing" ]]; then
@@ -189,7 +189,9 @@ VALUES
   [[ -n "$litellm_pod" ]] || { printf 'No running LiteLLM proxy pod found. Check kubectl get pods -n inference, then retry.\n' >&2; exit 1; }
   kubectl wait --namespace inference --for=condition=Ready "$litellm_pod" --timeout=60s >/dev/null
   mappings=(svc/inference-stack-launcher:8080:8080 "$litellm_pod:4000:4000" svc/inference-stack-grafana:3000:80)
+  lens_installed=false
   if kubectl get service inference-stack-lens --namespace inference >/dev/null 2>&1; then
+    lens_installed=true
     mappings+=(svc/inference-stack-lens:4318:4318)
   fi
   for mapping in "${mappings[@]}"; do
@@ -202,6 +204,10 @@ VALUES
   for pid in "${forwards[@]}"; do
     kill -0 "$pid" 2>/dev/null || { printf 'Port forwarding failed. Check that ports 8080, 4000, 3000 and 4318 are free and your cluster permits port-forwarding.\n' >&2; exit 1; }
   done
-  printf '\nOpen http://localhost:8080\nSign in as admin with the masterkey field of Secret inference-stack-litellm-masterkey in namespace inference.\nAgent traces: open http://localhost:4318/ui/ and sign in with the admin-token field of Secret inference-stack-lens-admin.\nLeave this terminal open for the launcher and dashboards. Ctrl-C closes the connections; the stack keeps running.\n'
+  printf '\nOpen http://localhost:8080\nSign in as admin with the masterkey field of Secret inference-stack-litellm-masterkey in namespace inference.\n'
+  if [[ "$lens_installed" == true ]]; then
+    printf 'Agent traces: open http://localhost:4000/ui/lens/ and sign in to LiteLLM.\n'
+  fi
+  printf 'Leave this terminal open for the launcher and dashboards. Ctrl-C closes the connections; the stack keeps running.\n'
   wait
 fi
