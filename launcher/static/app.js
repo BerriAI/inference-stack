@@ -118,14 +118,18 @@ function home() {
     ['deployments','Deployments','Deploy models and check health','vllm',s.errors[0] || (s.deployment.error?'A deployment needs attention':s.models.some(m=>m.simulate)?'':s.hardware.count===0 && !s.capacity?'No GPU detected':s.hardware.error?'GPU check unavailable':'')],
     ['litellm','LiteLLM','Manage models and send requests','litellm',s.components.litellm.healthy?'':'LiteLLM is unreachable']
   ];
+  if (s.components.lens?.url) cards.push(['lens','Lens','Trace agent runs','lens',s.components.lens.healthy?'':'Lens is unreachable']);
+  cards.push(['grafana','Grafana','Monitor usage and performance','grafana',s.components.grafana.healthy?'':'Grafana is unreachable']);
   return `${homeSummary()}<div class="stack-home">${cards.map(([brand,title,subtitle,action,problem]) => {
     const url = s.components[action]?.url;
-    const open = url && /^https?:\/\//.test(url) ? `<a href="${escape(url)}" target="_blank" rel="noopener noreferrer"` : `<button type="button" data-action="${action}"`;
-    return `${open} class="stack-tile">${logo(brand)}<span class="tile-arrow">${forwardArrow}</span><div><h2>${title}</h2><p>${subtitle}</p>${problem?`<div class="tile-problem">${escape(problem)}</div>`:''}</div>${url?'</a>':'</button>'}`;
-  }).join('')}</div><div class="stack-secondary"><div>${external('grafana','Grafana · Usage and performance')}${!s.components.grafana.healthy?'<p class="stack-blocker">Grafana is unreachable</p>':''}</div><div>${external('lens','Lens · Agent traces')}${s.components.lens && !s.components.lens.healthy?'<p class="stack-blocker">Lens is unreachable</p>':''}</div><div>${s.models.length?textButton('Replica scheduling →','routing'):''}${!s.components.router.healthy?'<p class="stack-blocker">Routing needs attention</p>':''}</div></div>${poweredBy()}`;
+    const linked = url && /^https?:\/\//.test(url);
+    const open = linked ? `<a href="${escape(url)}" target="_blank" rel="noopener noreferrer"` : `<button type="button" data-action="${action}" ${action==='vllm'?'':'disabled'}`;
+    return `${open} class="stack-tile">${logo(brand)}<span class="tile-arrow">${forwardArrow}</span><div><h2>${title}</h2><p>${subtitle}</p>${problem?`<div class="tile-problem">${escape(problem)}</div>`:''}</div>${linked?'</a>':'</button>'}`;
+  }).join('')}</div><div class="stack-home-footer">${poweredBy()}${s.models.length || !s.components.router.healthy?`<div class="stack-routing-link">${s.models.length?textButton('Replica scheduling →','routing'):''}${!s.components.router.healthy?'<p class="stack-blocker">Routing needs attention</p>':''}</div>`:''}</div>`;
 }
 function poweredBy() {
-  const projects = [['huggingface','Hugging Face','https://huggingface.co'],['vllm','vLLM','https://vllm.ai'],['litellm','LiteLLM','https://www.litellm.ai'],['grafana','Grafana','https://grafana.com'],['lens','Lens','https://github.com/BerriAI/lens']];
+  const projects = [['huggingface','Hugging Face','https://huggingface.co'],['vllm','vLLM','https://vllm.ai'],['litellm','LiteLLM','https://www.litellm.ai'],['grafana','Grafana','https://grafana.com']];
+  if(state.status.components.lens?.url) projects.push(['lens','Lens','https://github.com/BerriAI/lens']);
   if(state.status.mode==='compose' || state.status.models.length) projects.push(['llmd','llm-d','https://llm-d.ai']);
   return `<footer class="stack-powered" aria-label="Powered by open source">${projects.map(([key,name,url])=>`<a href="${url}" title="${name}" aria-label="${name} project" target="_blank" rel="noopener noreferrer">${logo(key)}</a>`).join('')}</footer>`;
 }

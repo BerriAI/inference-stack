@@ -65,7 +65,7 @@ async function modelPage(gpus = 8, overrides = {}) {
     mode: 'compose', hardware: {count: gpus, devices: [], error: ''},
     permissions: {deploy: true, read: true}, errors: [], models: [],
     deployment: {request: null, step: '', error: ''},
-    components: {litellm: {healthy: true}, grafana: {healthy: true}, router: {healthy: true}},
+    components: {litellm: {healthy: true, url: 'https://example.com/litellm/ui'}, grafana: {healthy: true, url: 'https://example.com/grafana'}, router: {healthy: true}},
     ...overrides,
   };
   const info = {id: 'example/model', suggested_gpus: 1, suggested_context: 4096, max_context: 32768};
@@ -162,7 +162,7 @@ test('Empty AWS home exposes zero counts and a priced GPU action without install
     await page.getByRole('button', {name: 'inference stack', exact: true}).click();
     await page.getByRole('link', {name: '0 deployments', exact: true}).waitFor();
     assert.equal(await page.getByRole('link', {name: '0 GPUs', exact: true}).count(), 1);
-    assert.equal(await page.locator('.stack-tile').count(), 2);
+    assert.equal(await page.getByRole('link', {name: 'Grafana Monitor usage and performance', exact: true}).getAttribute('href'), 'https://example.com/grafana');
     assert.equal(await page.getByText('No GPU detected', {exact: true}).count(), 0);
     await page.getByRole('button', {name: 'Add GPU', exact: true}).click();
     await page.getByRole('heading', {name: 'Add GPU', exact: true}).waitFor();
@@ -173,6 +173,56 @@ test('Empty AWS home exposes zero counts and a priced GPU action without install
     assert.deepEqual(rents, [{expected: 0, desired: 1, instance_type: 'g5.2xlarge', hourly_usd: 1.212}]);
     assert.equal(submitted.length, 0);
     assert.equal(await page.getByRole('button', {name: 'Add GPU · $1.212/hour', exact: true}).isEnabled(), true);
+  } finally { await page.close(); }
+});
+
+test('Home opens Lens and Grafana directly in their native interfaces', async () => {
+  const {page} = await modelPage(0, {
+    components: {
+      litellm: {healthy: true, url: 'https://example.com/litellm/ui'},
+      lens: {healthy: true, url: 'https://example.com/lens/ui/'},
+      grafana: {healthy: true, url: 'https://example.com/grafana/d/inference-stack-overview'},
+      router: {healthy: true},
+    },
+  });
+  await page.context().route('https://example.com/**', route => route.fulfill({body: '<h1>Native application</h1>', contentType: 'text/html'}));
+  try {
+    await page.getByRole('button', {name: 'inference stack', exact: true}).click();
+    for (const [name, url] of [
+      ['Lens Trace agent runs', 'https://example.com/lens/ui/'],
+      ['Grafana Monitor usage and performance', 'https://example.com/grafana/d/inference-stack-overview'],
+    ]) {
+      const link = page.getByRole('link', {name, exact: true});
+      const popupReady = page.waitForEvent('popup');
+      await link.click();
+      const popup = await popupReady;
+      await popup.waitForURL(url);
+      await popup.close();
+      assert.equal(new URL(page.url()).hash, '#home');
+    }
+    await page.getByRole('button', {name: /^Deployments Deploy models and check health/}).click();
+    await page.getByRole('heading', {name: 'Deploy a model', exact: true}).waitFor();
+  } finally { await page.close(); }
+});
+
+test('Home distinguishes disabled Lens from unreachable Lens and fits narrow screens', async () => {
+  const {page, status} = await modelPage();
+  try {
+    await page.getByRole('button', {name: 'inference stack', exact: true}).click();
+    assert.equal(await page.getByRole('heading', {name: 'Lens', exact: true}).count(), 0);
+    assert.equal(await page.getByText('Lens is unreachable', {exact: true}).count(), 0);
+    status.components.lens = {healthy: false, url: 'https://example.com/lens/ui/'};
+    await page.reload();
+    await page.getByText('Lens is unreachable', {exact: true}).waitFor();
+    assert.equal(await page.getByRole('link', {name: 'Lens Trace agent runs Lens is unreachable', exact: true}).getAttribute('href'), status.components.lens.url);
+    for (const width of [390, 768, 1280]) {
+      await page.setViewportSize({width, height: 800});
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      if (width >= 768) {
+        const grafana = await page.getByRole('link', {name: 'Grafana Monitor usage and performance', exact: true}).boundingBox();
+        assert.ok(grafana.y + grafana.height <= 800, 'All primary destinations fit in the first desktop viewport');
+      }
+    }
   } finally { await page.close(); }
 });
 
