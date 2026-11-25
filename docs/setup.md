@@ -213,11 +213,25 @@ curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.4.1/i
 
 When updating a Docker install that predates the Grafana volume, run the installer before removing or recreating the old Grafana container. The installer copies its dashboards and other Grafana data into the new volume. A stopped container can still be migrated.
 
-For an existing Kubernetes cluster, update the chart while retaining your values:
+For an existing Kubernetes cluster, confirm your current context and run one upgrade at a time. The command below retains your values and removes the old LiteLLM migration Job only after it completes. Kubernetes cannot update a Job's pod template in place. If the old migration fails or is still running after the timeout, check its logs before retrying.
 
 ```bash
-helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.4.1/inference-stack-0.4.1.tgz \
-  --namespace inference --reset-then-reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.4.1 --wait
+(
+  set -e
+  job=job/inference-stack-litellm-migrations
+  existing=$(kubectl -n inference get "$job" --ignore-not-found -o name)
+  if [ -n "$existing" ]; then
+    if ! kubectl -n inference wait --for=condition=complete "$job" --timeout=10m; then
+      # Continue only if Kubernetes already cleaned up the old Job.
+      existing=$(kubectl -n inference get "$job" --ignore-not-found -o name)
+      [ -z "$existing" ] || exit 1
+    fi
+    kubectl -n inference delete "$job" --ignore-not-found
+  fi
+  helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.4.1/inference-stack-0.4.1.tgz \
+    --namespace inference --reset-then-reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.4.1 \
+    --wait --wait-for-jobs --timeout 10m
+)
 ```
 
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
