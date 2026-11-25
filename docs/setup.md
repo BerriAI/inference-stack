@@ -230,9 +230,11 @@ For an existing Kubernetes cluster, confirm your current context and run one upg
   fi
   helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.4.1/inference-stack-0.4.1.tgz \
     --namespace inference --reset-then-reuse-values --set-string launcher.image=ghcr.io/berriai/inference-stack/launcher:0.4.1 \
-    --wait --wait-for-jobs --timeout 10m
+    --wait --timeout 10m
 )
 ```
+
+With Helm 4, use `--wait=legacy` instead of `--wait` so Helm does not wait on a Job Kubernetes may already have removed.
 
 After the chart update, rerun the [Kubernetes setup command](#kubernetes) to reconnect. Open the launcher and LiteLLM to confirm both are reachable.
 
