@@ -7,7 +7,7 @@ appVersion: "0.4.1"
 dependencies:
   - name: litellm-helm
     alias: litellm
-    version: 1.110.3
+    version: 1.110.4
     repository: oci://ghcr.io/berriai
   - name: prometheus
     version: 27.3.0
