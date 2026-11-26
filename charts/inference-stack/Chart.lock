@@ -10,6 +10,6 @@ dependencies:
   version: 8.8.2
 - name: lens
   repository: oci://ghcr.io/berriai/charts
-  version: 0.4.0
-digest: sha256:b54bb21809bc508aefb6cd103b857dbaca38cc4b3a009cc8a65631c00217627c
-generated: "2026-11-25T16:56:17.094066318Z"
+  version: 0.5.0
+digest: sha256:d4cfafbfe7354c22f2b73238e39a9948169e22aad940a031e82cccc454a57c77
+generated: "2026-11-26T00:35:49.348153214Z"
