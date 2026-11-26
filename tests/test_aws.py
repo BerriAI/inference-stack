@@ -122,11 +122,15 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(cache['OriginRequestPolicyId'], 'b689b0a8-53d0-40ab-baf2-68738e2966ac')  # AllViewerExceptHostHeader
 
         config = bootstrap.proxy_config('example.cloudfront.net', '10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4')
+        self.assertIn('location = /litellm { return 302 /litellm/ui/lens/; }', config)
+        self.assertIn('location = /litellm/litellm/lens/ui/ { return 308 /litellm/lens/ui/$is_args$args; }', config)
+        self.assertIn('location /litellm/ { proxy_pass http://10.0.0.2:4000; }', config)
         pattern = re.search(r'location ~ (\S+) \{ proxy_pass http://10\.0\.0\.4:4318; \}', config)[1]
         for path in ('/ui', '/ui/', '/ui/_next/static/app.js', '/auth/session', '/auth/methods',
                      '/v1/traces', '/v1/logs', '/v1/traces/receipt', '/v1/logs/id', '/lens/admin/tracing/keys'):
             self.assertRegex(path, pattern)
-        for path in ('/', '/api/status', '/litellm/ui', '/grafana/', '/internal/read', '/v1/chat/completions', '/v1/traces-other'):
+        for path in ('/', '/api/status', '/litellm/ui', '/litellm/v1/traces', '/litellm/v1/logs',
+                     '/grafana/', '/internal/read', '/v1/chat/completions', '/v1/traces-other'):
             self.assertNotRegex(path, pattern)
 
     def test_existing_aws_install_upgrades_only_lens_values_and_reuses_its_own_chart(self):
@@ -143,12 +147,18 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(overrides['launcher'], {'lensPublicUrl': public_url})
             self.assertEqual(overrides['lens'], bootstrap.lens_values(public_url)['lens'])
 
-        with patch.dict(os.environ), patch.object(bootstrap, 'run', side_effect=helm) as run, \
-             patch.object(bootstrap, 'metadata', return_value='t3.xlarge'), \
-             patch.object(bootstrap, 'configure_proxy') as proxy:
-            bootstrap.enable_lens()
-        self.assertEqual(run.call_count, 2)
-        proxy.assert_called_once_with(public_url)
+        for gateway_lens in (False, True):
+            with self.subTest(gateway_lens=gateway_lens), patch.dict(os.environ), \
+                 patch.object(bootstrap, 'run', side_effect=helm) as run, \
+                 patch.object(bootstrap, 'metadata', return_value='t3.xlarge'), \
+                 patch.object(bootstrap, 'configure_proxy') as proxy:
+                if gateway_lens:
+                    template = self.root / 'charts/inference-stack/templates/lens-connection.yaml'
+                    template.parent.mkdir(parents=True)
+                    template.touch()
+                bootstrap.enable_lens()
+                self.assertEqual(run.call_count, 2)
+                proxy.assert_called_once_with(public_url, gateway_lens=gateway_lens)
 
     def test_t3_large_lens_upgrade_persists_small_cpu_requests_without_overriding_custom_requests(self):
         public_url = 'https://example.cloudfront.net'

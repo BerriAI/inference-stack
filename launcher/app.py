@@ -272,7 +272,7 @@ def status() -> dict:
         "grafana": {"healthy": is_healthy(f"{settings.GRAFANA_URL}/api/health"), "url": f"{settings.GRAFANA_PUBLIC_URL}/d/inference-stack-overview"},
     }
     if settings.LENS_PUBLIC_URL:
-        components["lens"] = {"healthy": is_healthy(f"{settings.LENS_URL}/health/ready"), "url": f"{settings.LENS_PUBLIC_URL}/ui/"}
+        components["lens"] = {"healthy": is_healthy(f"{settings.LENS_URL}/health/ready"), "url": f"{settings.LITELLM_PUBLIC_URL}/ui/lens/"}
     permissions = kubernetes.permissions() if settings.MODE == "kubernetes" else {"read": True, "deploy": True, "error": ""}
     errors = []
     try:
