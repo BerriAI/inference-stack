@@ -312,8 +312,8 @@ Resources:
             apt-get install -y curl unzip python3
             directory=$(mktemp -d)
             trap 'rm -rf "$directory"' EXIT
-            curl -fsSL --retry 3 https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.40.3.zip -o "$directory/awscli.zip"
-            (cd "$directory"; echo '4770c06c4ecfc8ba94b60d89e6c7018ab7ea2cf5341b1ef05f6f93c5d6e8b705  awscli.zip' | sha256sum --check --strict -)
+            curl -fsSL --retry 3 https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.42.4.zip -o "$directory/awscli.zip"
+            (cd "$directory"; echo '8998885d7fc32370c50efc2e44746c34b222a03d70015113a5554f98be79165c  awscli.zip' | sha256sum --check --strict -)
             unzip -q "$directory/awscli.zip" -d "$directory"
             "$directory/aws/install" --update
             trap 'aws cloudformation signal-resource --stack-name "$STACK_ID" --logical-resource-id Ready --unique-id installer --status FAILURE >/dev/null 2>&1 || true' ERR
