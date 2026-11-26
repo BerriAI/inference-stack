@@ -236,6 +236,17 @@ class PrerequisiteTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Ohio'):
             self.code['prepare'](self.properties)
 
+    def test_control_plane_and_gpu_worker_use_ubuntu_26_04_ssm_amis(self):
+        resources = TEMPLATE['Resources']
+        self.assertEqual(
+            resources['Machine']['Properties']['ImageId'],
+            '{{resolve:ssm:/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id}}',
+        )
+        self.assertEqual(
+            resources['WorkerTemplate']['Properties']['LaunchTemplateData']['ImageId'],
+            '{{resolve:ssm:/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-26.04/latest/ami-id}}',
+        )
+
     def test_template_has_no_public_ingress_or_simulation_setup_question(self):
         self.assertNotIn('Simulate', TEMPLATE['Parameters'])
         group = TEMPLATE['Resources']['MachineSecurityGroup']['Properties']

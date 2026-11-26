@@ -268,7 +268,7 @@ Resources:
     Type: AWS::EC2::Instance
     DependsOn: [InternetRoute, SubnetRoute]
     Properties:
-      ImageId: '{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id}}'
+      ImageId: '{{resolve:ssm:/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id}}'
       InstanceType: !GetAtt Prerequisites.InstanceType
       CreditSpecification:
         CPUCredits: standard
@@ -397,7 +397,7 @@ Resources:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateData:
-        ImageId: '{{resolve:ssm:/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id}}'
+        ImageId: '{{resolve:ssm:/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-26.04/latest/ami-id}}'
         InstanceType: g5.2xlarge
         IamInstanceProfile:
           Arn: !GetAtt WorkerProfile.Arn
