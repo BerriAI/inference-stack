@@ -13,7 +13,7 @@
   <a href="https://github.com/BerriAI/lens"><img src="launcher/static/logos/lens.svg" alt="Lens" height="40"></a>
 </p>
 
-**[Set up with Docker](#docker-compose)** &nbsp; · &nbsp; **[Set up with Kubernetes](#kubernetes)** &nbsp; · &nbsp; **[Launch on AWS](#aws)**
+**[Set up with Docker](#docker-compose)** &nbsp; · &nbsp; **[Set up with Kubernetes](#kubernetes)** &nbsp; · &nbsp; **[Set up on AWS](#aws)**
 
 </div>
 
@@ -47,7 +47,7 @@ No GPU? Enable **Simulate without a GPU** in the model's **Settings** for canned
 
 Start with 0 models and 0 GPUs in your own account. Requires a paid AWS account with deployment permissions. AWS bills for the launcher from setup and for GPU machines when you add them. Review GPU choices and prices in the UI.
 
-1. [Launch on AWS](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/create/review?templateURL=https%3A%2F%2Finference-stack-release-templates-templates-e0eqnr6ih8gk.s3.us-east-2.amazonaws.com%2Freleases%2Fv0.4.2%2Faws-stack.yaml&stackName=inference-stack). Enter an **Admin password** of at least 20 characters, keep the other defaults, acknowledge IAM permissions, and choose **Create stack**.
+1. Download `aws-stack.yaml` from the [latest GitHub release](https://github.com/BerriAI/inference-stack/releases/latest). In the [CloudFormation console (us-east-2)](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2), choose **Create stack → With new resources (standard)** and upload the template. Enter an **Admin password** of at least 20 characters, keep the other defaults, and acknowledge IAM permissions before creating the stack.
 2. Wait for **CREATE_COMPLETE**, then open **Outputs → OpenInferenceStack**. Sign in as `admin` with that password.
 3. Open **Deployments**, choose a model, select an **AWS GPU**, and choose **Add GPU and deploy** after reviewing its price.
 4. When **Ready**, choose **Try in LiteLLM**. Sign in with the same password, select the model in **Chat**, and send a message.
