@@ -95,7 +95,7 @@ services:
         condition: service_healthy
 
   envoy:
-    image: envoyproxy/envoy:distroless-v1.33.2
+    image: envoyproxy/envoy:distroless-v1.40.2
     command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"]
     volumes:
       - ./router/envoy.yaml:/etc/envoy/envoy.yaml:ro
