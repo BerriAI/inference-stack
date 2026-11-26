@@ -31,9 +31,10 @@ class LauncherTests(unittest.TestCase):
              patch.object(app.litellm_client, "list_models", return_value=[]), \
              patch.object(app, "gpu_inventory", return_value={"count": 0, "devices": []}):
             with patch.object(app.settings, "LENS_URL", "http://lens.internal:4318"), \
+                 patch.object(app.settings, "LITELLM_PUBLIC_URL", "https://stack.example/litellm"), \
                  patch.object(app.settings, "LENS_PUBLIC_URL", "https://traces.example"):
                 lens = self.client.get("/api/status").json()["components"]["lens"]
-            self.assertEqual(lens, {"healthy": False, "url": "https://traces.example/ui/"})
+            self.assertEqual(lens, {"healthy": False, "url": "https://stack.example/litellm/ui/lens/"})
             self.assertIn("http://lens.internal:4318/health/ready", probed)
             with patch.object(app.settings, "LENS_PUBLIC_URL", ""):
                 self.assertNotIn("lens", self.client.get("/api/status").json()["components"])
