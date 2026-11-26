@@ -32,6 +32,18 @@ class ChartTests(unittest.TestCase):
                 self.assertEqual(pod["containers"][0]["resources"]["limits"]["nvidia.com/gpu"], 4)
 
     @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
+    def test_router_tokenizer_uses_the_same_vllm_release_as_the_model_server(self):
+        chart = Path(__file__).resolve().parents[1] / "charts/model"
+        values = {"model": "Qwen/Qwen3-0.6B", "llm-d-router-standalone": {"router": {
+            "modelServers": {"matchLabels": {"model": "model"}}, "tokenizer": {"enabled": True, "modelName": "Qwen/Qwen3-0.6B"}}}}
+        result = subprocess.run(["helm", "template", "model", str(chart), "--values", "-"],
+                                input=json.dumps(values), text=True, capture_output=True, timeout=20, check=True)
+        images = [c["image"] for r in yaml.safe_load_all(result.stdout) if r and r["kind"] == "Deployment"
+                  for c in r["spec"]["template"]["spec"]["containers"]]
+        vllm = next(i for i in images if i.startswith("vllm/vllm-openai:"))
+        self.assertIn("docker.io/vllm/vllm-openai-cpu:" + vllm.split(":")[1], images)
+
+    @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
     def test_aws_host_access_is_opt_in_and_uses_admin_secret(self):
         chart = Path(__file__).resolve().parents[1] / "charts/inference-stack"
         for enabled in (False, True):
