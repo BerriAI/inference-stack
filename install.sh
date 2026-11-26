@@ -166,7 +166,7 @@ else
   else
     if [[ ! -d charts/inference-stack/charts ]]; then
       helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-      helm repo add grafana https://grafana.github.io/helm-charts
+      helm repo add grafana-community https://grafana-community.github.io/helm-charts
       helm dependency build charts/inference-stack
     fi
     helm install inference-stack charts/inference-stack --namespace inference --create-namespace \

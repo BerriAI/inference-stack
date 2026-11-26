@@ -12,6 +12,37 @@ from test_launcher import app
 
 class ChartTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
+    def test_grafana_image_and_dashboard_provisioning(self):
+        root = Path(__file__).resolve().parents[1]
+        chart = root / "charts/inference-stack"
+        compose = yaml.safe_load((root / "compose/docker-compose.yaml").read_text())
+        compose_image = compose["services"]["grafana"]["image"]
+        result = subprocess.run(
+            ["helm", "template", "inference-stack", str(chart),
+             "--set", "grafana.persistence.enabled=true",
+             "--set-string", "litellm.postgresql.auth.password=test-only-database-password-0123456789",
+             "--set-string", "litellm.postgresql.auth.postgres-password=test-only-database-admin-0123456789"],
+            text=True, capture_output=True, timeout=20, check=True,
+        )
+        resources = {(r["kind"], r["metadata"]["name"]): r for r in yaml.safe_load_all(result.stdout) if r}
+        pod = resources["Deployment", "inference-stack-grafana"]["spec"]["template"]["spec"]
+        grafana = next(c for c in pod["containers"] if c["name"] == "grafana")
+        self.assertEqual(grafana["image"].removeprefix("docker.io/").removesuffix("-distroless"), compose_image)
+        init_chown = next(c for c in pod["initContainers"] if c["name"] == "init-chown-data")
+        self.assertRegex(init_chown["image"], r"^docker\.io/library/busybox:1\.36\.1@sha256:[0-9a-f]{64}$")
+
+        provisioning = resources["ConfigMap", "inference-stack-grafana"]["data"]
+        provider = yaml.safe_load(provisioning["dashboardproviders.yaml"])["providers"][0]
+        volumes = {v["name"]: v for v in pod["volumes"]}
+        mount = next(m for m in grafana["volumeMounts"] if m["mountPath"] == provider["options"]["path"])
+        dashboards = resources["ConfigMap", volumes[mount["name"]]["configMap"]["name"]]["data"]
+        self.assertEqual({json.loads(v)["title"] for v in dashboards.values()},
+                         {json.loads(p.read_text())["title"] for p in (chart / "files/dashboards").rglob("*.json")})
+        datasource = yaml.safe_load(provisioning["datasources.yaml"])["datasources"][0]
+        self.assertEqual((datasource["uid"], datasource["type"], datasource["url"]),
+                         ("prometheus", "prometheus", "http://inference-stack-prometheus"))
+
+    @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
     def test_mixed_gpu_fleet_schedules_on_matching_capacity(self):
         chart = Path(__file__).resolve().parents[1] / "charts/model"
         for simulated in (False, True):

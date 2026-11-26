@@ -22,7 +22,7 @@ All published ports bind to `127.0.0.1`. The launcher controls Docker, so keep l
 
 ## Kubernetes
 
-Use this path for a cluster. You need Helm 3.14 or later, `kubectl`, curl, OpenSSL, and permission to install the stack's resources. Confirm that `kubectl config current-context` selects the intended cluster. Real models need GPU nodes with the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html). Simulation does not require GPUs.
+Use this path for a cluster. You need Kubernetes 1.25 or later, Helm 3.14 or later, `kubectl`, curl, OpenSSL, and permission to install the stack's resources. Confirm that `kubectl config current-context` selects the intended cluster. Real models need GPU nodes with the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html). Simulation does not require GPUs.
 
 ```bash
 curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.4.2/install.sh | bash -s -- kubernetes
@@ -206,7 +206,7 @@ curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.4.2/i
 
 When updating a Docker install that predates the Grafana volume, run the installer before removing or recreating the old Grafana container. The installer copies its dashboards and other Grafana data into the new volume. A stopped container can still be migrated.
 
-For an existing Kubernetes cluster, update the chart while retaining your values:
+For an existing Kubernetes cluster, update the chart with the new defaults and retain your explicit overrides:
 
 ```bash
 helm upgrade inference-stack https://github.com/BerriAI/inference-stack/releases/download/v0.4.2/inference-stack-0.4.2.tgz \
@@ -291,7 +291,7 @@ From the repository root, with Python 3.12, Helm, and Docker installed:
 python3 -m venv .venv
 .venv/bin/pip install -r launcher/requirements.txt
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo add grafana https://grafana.github.io/helm-charts
+helm repo add grafana-community https://grafana-community.github.io/helm-charts
 helm dependency build charts/model
 helm dependency build charts/inference-stack
 .venv/bin/python -m unittest discover -s tests
