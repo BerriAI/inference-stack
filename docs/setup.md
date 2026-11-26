@@ -206,6 +206,8 @@ curl -fsSL https://github.com/BerriAI/inference-stack/releases/download/v0.4.1/i
 
 When updating a Docker install that predates the Grafana volume, run the installer before removing or recreating the old Grafana container. The installer copies its dashboards and other Grafana data into the new volume. A stopped container can still be migrated.
 
+Docker installs now run Postgres 19 in the `database` volume. On the first start after updating, a one-time `postgres-upgrade` job copies the LiteLLM database from the Postgres 16 `postgres` volume and leaves that volume untouched. After checking your keys, teams and models, you can remove it with `docker volume rm inference-stack_postgres` (replace `inference-stack` with your `COMPOSE_PROJECT_NAME` if you set one).
+
 For an existing Kubernetes cluster, update the chart while retaining your values:
 
 ```bash
