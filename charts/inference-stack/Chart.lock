@@ -4,12 +4,12 @@ dependencies:
   version: 1.110.2
 - name: prometheus
   repository: https://prometheus-community.github.io/helm-charts
-  version: 27.3.0
+  version: 30.0.1
 - name: grafana
   repository: https://grafana.github.io/helm-charts
   version: 8.8.2
 - name: lens
   repository: oci://ghcr.io/berriai/charts
   version: 0.5.0
-digest: sha256:b7282cb0885dde3a1fa54ee47e79bdaeb6b13cdff4f6d2ac36969d906e3a926c
-generated: "2026-11-26T00:27:06.908160254Z"
+digest: sha256:d4cfafbfe7354c22f2b73238e39a9948169e22aad940a031e82cccc454a57c77
+generated: "2026-11-26T00:35:49.348153214Z"
