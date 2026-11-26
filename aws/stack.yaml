@@ -60,7 +60,7 @@ Resources:
   PrerequisiteFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Runtime: python3.12
+      Runtime: python3.15
       Handler: index.handler
       Timeout: 90
       Role: !GetAtt PrerequisiteRole.Arn
@@ -595,7 +595,7 @@ Resources:
   StopFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Runtime: python3.12
+      Runtime: python3.15
       Handler: index.handler
       Timeout: 60
       Role: !GetAtt StopFunctionRole.Arn
