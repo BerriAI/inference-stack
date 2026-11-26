@@ -1,0 +1,23 @@
+{{- $name := "inference-stack-lens-connection" }}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $name }}
+{{- $saved := (get $existing "data") | default dict }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+data:
+  {{- range $key := list "LENS_GATEWAY_SECRET" "LITELLM_LENS_SERVICE_TOKEN" }}
+  {{- if or $.Values.lens.enabled (hasKey $saved $key) }}
+  {{ $key }}: {{ get $saved $key | default (randAlphaNum 64 | b64enc) | quote }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.lens.enabled }}
+  {{- $root := (urlParse .Values.launcher.litellmPublicUrl).path | trimSuffix "/" }}
+  LITELLM_LENS_URL: {{ printf "http://%s:%v" .Values.lens.fullnameOverride .Values.lens.service.port | b64enc | quote }}
+  LITELLM_LENS_PUBLIC_URL: {{ .Values.launcher.lensPublicUrl | b64enc | quote }}
+  DOCS_URL: {{ "/docs" | b64enc | quote }}
+  ROOT_REDIRECT_URL: {{ printf "%s/ui/lens/" $root | b64enc | quote }}
+  {{- end }}

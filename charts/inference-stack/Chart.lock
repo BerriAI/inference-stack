@@ -1,7 +1,7 @@
 dependencies:
 - name: litellm-helm
   repository: oci://ghcr.io/berriai
-  version: 1.110.4
+  version: 1.110.2
 - name: prometheus
   repository: https://prometheus-community.github.io/helm-charts
   version: 27.3.0
@@ -10,6 +10,6 @@ dependencies:
   version: 8.8.2
 - name: lens
   repository: oci://ghcr.io/berriai/charts
-  version: 0.4.0
-digest: sha256:a0d1e916f3ff655e8457aa3a96da2bfb724822297b5f8a3095107d679608d6a0
-generated: "2026-11-25T16:56:08.674748742Z"
+  version: 0.5.0
+digest: sha256:b7282cb0885dde3a1fa54ee47e79bdaeb6b13cdff4f6d2ac36969d906e3a926c
+generated: "2026-11-26T00:27:06.908160254Z"

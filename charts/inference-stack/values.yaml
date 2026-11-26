@@ -18,13 +18,16 @@ launcher:
 
 litellm:
   image:
-    tag: "v1.111.0@sha256:ce00096d012719d58c52cecfa373f7c6256dd1b0ff08f6fa607e10e9628f1f46"
+    tag: v1.112.0-rc.1@sha256:308236548c78ca58eaa6e82a473f710e5cee279fe9c92ac5a5038cef305a2f3b
+  environmentSecrets:
+    - inference-stack-lens-connection
   postgresql:
     auth:
       # Supply generated passwords at install time; Helm stores them in Secrets.
       password: ""
       postgres-password: ""
   podAnnotations:
+    inference-stack/lens-config-revision: '{{ .Release.Revision }}'
     prometheus.io/scrape: "true"
     prometheus.io/port: "4000"
     prometheus.io/path: /metrics/
@@ -49,8 +52,15 @@ litellm:
 lens:
   enabled: true
   fullnameOverride: inference-stack-lens
+  gateway:
+    enabled: true
+    secretName: inference-stack-lens-connection
+    secretKey: LENS_GATEWAY_SECRET
+  serviceTokenSecret:
+    name: inference-stack-lens-connection
+    key: LITELLM_LENS_SERVICE_TOKEN
   image:
-    digest: sha256:7a9dd491cc84d0cdfcae2fb0bd4c2c32482ea03600e4ac035322c858db0bd4cf
+    digest: sha256:b9c572dbec3d293c46cbec0d0d968125d63e0cda2cabc254e56d405c805c9496
 
 prometheus:
   alertmanager:
