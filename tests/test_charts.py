@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 import shutil
@@ -48,7 +49,7 @@ class ChartTests(unittest.TestCase):
                 self.assertEqual(environment["LAUNCHER_PASSWORD"]["valueFrom"]["secretKeyRef"]["name"], "test-only-admin")
 
     @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
-    def test_lens_runs_standalone_by_default_and_launcher_links_to_it(self):
+    def test_gateway_connects_to_lens_only_when_enabled(self):
         chart = Path(__file__).resolve().parents[1] / "charts/inference-stack"
         auth = {"litellm": {"postgresql": {"auth": {"password": "test-only-database-password-0123456789", "postgres-password": "test-only-database-admin-0123456789"}}}}
         for enabled in (True, False):
@@ -57,20 +58,39 @@ class ChartTests(unittest.TestCase):
                                     input=json.dumps(values), text=True, capture_output=True, timeout=20, check=True)
             resources = [r for r in yaml.safe_load_all(result.stdout) if r]
             names = {(r["kind"], r["metadata"]["name"]) for r in resources}
+            gateway = next(r for r in resources if r["kind"] == "Deployment" and r["metadata"]["name"] == "inference-stack-litellm")
+            proxy = gateway["spec"]["template"]["spec"]["containers"][0]
+            migration = next(r for r in resources if r["kind"] == "Job" and "litellm" in r["metadata"]["name"])
+            self.assertRegex(proxy["image"], r"^ghcr\.io/berriai/litellm:v1\.112\.0-rc\.1@sha256:[0-9a-f]{64}$")
+            self.assertEqual(migration["spec"]["template"]["spec"]["containers"][0]["image"], proxy["image"])
+            connection_name = proxy["envFrom"][0]["secretRef"]["name"]
+            connection = next(r for r in resources if r["kind"] == "Secret" and r["metadata"]["name"] == connection_name)
+            config = {key: base64.b64decode(value).decode() for key, value in (connection["data"] or {}).items()}
             launcher = next(r for r in resources if r["kind"] == "Deployment" and r["metadata"]["name"] == "inference-stack-launcher")
             environment = {v["name"]: v.get("value") for v in launcher["spec"]["template"]["spec"]["containers"][0]["env"]}
             self.assertEqual(("Service", "inference-stack-lens") in names, enabled)
             self.assertEqual(("StatefulSet", "inference-stack-lens-clickhouse") in names, enabled)
             if not enabled:
                 self.assertEqual(environment["LENS_PUBLIC_URL"], "")
+                self.assertNotIn("LITELLM_LENS_URL", config)
+                self.assertNotIn("ROOT_REDIRECT_URL", config)
                 continue
             service = next(r for r in resources if r["kind"] == "Service" and r["metadata"]["name"] == "inference-stack-lens")
             self.assertEqual(environment["LENS_URL"], f"http://inference-stack-lens:{service['spec']['ports'][0]['port']}")
+            self.assertEqual(config["LITELLM_LENS_URL"], environment["LENS_URL"])
             self.assertEqual(environment["LENS_PUBLIC_URL"], "http://localhost:4318")
+            self.assertEqual(config["LITELLM_LENS_PUBLIC_URL"], environment["LENS_PUBLIC_URL"])
+            self.assertEqual(config["DOCS_URL"], "/docs")
+            self.assertEqual(config["ROOT_REDIRECT_URL"], "/ui/lens/")
             lens = next(r for r in resources if r["kind"] == "Deployment" and r["metadata"]["name"] == "inference-stack-lens")
             container = lens["spec"]["template"]["spec"]["containers"][0]
             self.assertRegex(container["image"], r"^ghcr\.io/berriai/lens@sha256:[0-9a-f]{64}$")
             self.assertEqual({v["name"]: v.get("value") for v in container["env"]}["LENS_MODE"], "standalone")
+            env = {v["name"]: v for v in container["env"]}
+            for key in ("LITELLM_LENS_SERVICE_TOKEN", "LENS_GATEWAY_SECRET"):
+                self.assertEqual(env[key]["valueFrom"]["secretKeyRef"], {"name": connection_name, "key": key})
+                self.assertGreaterEqual(len(config[key]), 32)
+            self.assertNotEqual(config["LITELLM_LENS_SERVICE_TOKEN"], config["LENS_GATEWAY_SECRET"])
 
     @unittest.skipUnless(shutil.which("helm"), "Helm is required for chart contract checks")
     def test_each_model_mounts_its_own_rendered_router_configuration(self):

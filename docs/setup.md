@@ -77,24 +77,17 @@ A response confirms the path from LiteLLM through llm-d to the model server. Sim
 | Launcher | http://localhost:8080 |
 | LiteLLM | http://localhost:4000/ui |
 | Grafana | http://localhost:3000 |
-| Lens | http://localhost:4318/ui/ |
+| Lens | http://localhost:4000/ui/lens/ |
 
 LiteLLM, Lens, and Grafana open in new tabs. Use **Replica scheduling → Settings** to adjust inference scheduling, and **Grafana** to inspect the stack overview.
 
 ### Agent traces with Lens
 
-Lens 0.4.0 runs standalone next to LiteLLM, with its own ClickHouse storage and 14 days of retention. Open **Lens** on the launcher home and sign in with the Lens admin token: `LENS_ADMIN_TOKEN` in `compose/.env`, or the `admin-token` field of Secret `inference-stack-lens-admin` on Kubernetes and AWS. On AWS, open **EC2 → Instances**, select the stack's launcher, and choose **Connect → Session Manager**. Read the token in that terminal:
+Open **Lens** from the launcher or the LiteLLM gateway home, and sign in to LiteLLM.
 
-```bash
-sudo k3s kubectl get secret inference-stack-lens-admin -n inference \
-  -o jsonpath='{.data.admin-token}' | base64 --decode
-```
+Send OTLP/HTTP traces to `/v1/traces` and logs to `/v1/logs` with a LiteLLM key (`Authorization: Bearer <key>`), using `http://localhost:4000` locally or `https://<CloudFront hostname>/litellm` on AWS.
 
-Keep this token private.
-
-On **Home**, choose **Standalone Lens**, pick Claude Code, Codex or OpenCode, and choose **Copy instructions with new key**: Lens creates a tracing key and copies setup instructions for that agent. Any other OTLP exporter sends traces to `/v1/traces` and logs to `/v1/logs` with `Authorization: Bearer <tracing key>`. Use the launcher's CloudFront HTTPS address on AWS or `http://localhost:4318` for local Docker or port-forwarded Kubernetes. See [Claude Code telemetry](https://github.com/BerriAI/lens/blob/v0.4.0/docs/claude-code.md#standalone-lens) for the full variable list.
-
-Agents keep sending model calls to LiteLLM. LiteLLM's own gateway does not accept agent traces in this release, so send them to Lens directly. To turn Lens off on Kubernetes, set `lens.enabled=false`; for a Lens address beyond port-forwarding, set `lens.publicUrl` and `launcher.lensPublicUrl` to the address browsers open.
+To turn Lens off on Kubernetes, set `lens.enabled=false`.
 
 ## Configuration
 
@@ -236,7 +229,7 @@ awk '$2 == "aws-bootstrap.py"' SHA256SUMS | sha256sum --check &&
 sudo python3 aws-bootstrap.py --enable-lens
 ```
 
-Open **Lens** from the launcher and confirm that it loads. Existing GPU machines and model deployments stay in place.
+Open **Lens** from the launcher and sign in with the `admin-token` field of Secret `inference-stack-lens-admin` in the `inference` namespace. This older install still uses standalone Lens. Existing GPU machines and model deployments stay in place.
 
 ## Deploy with your agent
 

@@ -142,7 +142,13 @@ def kubectl(*args):
     return run('/usr/local/bin/k3s', 'kubectl', *args)
 
 
-def proxy_config(host, launcher, litellm, grafana, lens):
+def proxy_config(host, launcher, litellm, grafana, lens, *, gateway_lens=True):
+    gateway_home = '/litellm/ui/lens/' if gateway_lens else '/litellm/ui'
+    # LiteLLM v1.112.0-rc.1 adds SERVER_ROOT_PATH twice to the Lens iframe URL.
+    gateway_ui_alias = (
+        '    location = /litellm/litellm/lens/ui/ { return 308 /litellm/lens/ui/$is_args$args; }\n'
+        if gateway_lens else ''
+    )
     return f"""map $http_upgrade $connection_upgrade {{ default upgrade; '' close; }}
 server {{
     listen 80 default_server;
@@ -159,8 +165,8 @@ server {{
     proxy_set_header X-Lens-UI-Mount "";
     proxy_buffering off;
     proxy_read_timeout 120s;
-    location = /litellm {{ return 302 /litellm/ui; }}
-    location /litellm/ {{ proxy_pass http://{litellm}:4000; }}
+    location = /litellm {{ return 302 {gateway_home}; }}
+{gateway_ui_alias}    location /litellm/ {{ proxy_pass http://{litellm}:4000; }}
     location = /grafana {{ return 302 /grafana/; }}
     location /grafana/ {{ proxy_pass http://{grafana}:80; }}
     location ~ ^/(ui|auth|lens|v1/(traces|logs))(/|$) {{ proxy_pass http://{lens}:4318; }}
@@ -223,11 +229,12 @@ def configure_stack(public_url, password):
     return configure_proxy(public_url)
 
 
-def configure_proxy(public_url):
+def configure_proxy(public_url, *, gateway_lens=True):
     addresses = []
     for name in ('inference-stack-launcher', 'inference-stack-litellm', 'inference-stack-grafana', 'inference-stack-lens'):
         addresses.append(json.loads(kubectl('get', 'service', name, '-n', 'inference', '-o', 'json'))['spec']['clusterIP'])
-    write('/etc/nginx/sites-available/inference-stack', proxy_config(public_url.removeprefix('https://'), *addresses), 0o644)
+    write('/etc/nginx/sites-available/inference-stack',
+          proxy_config(public_url.removeprefix('https://'), *addresses, gateway_lens=gateway_lens), 0o644)
     Path('/etc/nginx/sites-enabled/default').unlink(missing_ok=True)
     link = Path('/etc/nginx/sites-enabled/inference-stack')
     if not link.exists():
@@ -249,12 +256,13 @@ def enable_lens():
         for saved, target in ((lens, overrides['lens']), (lens.get('clickhouse', {}), overrides['lens'].setdefault('clickhouse', {}))):
             if 'cpu' not in saved.get('resources', {}).get('requests', {}):
                 target['resources'] = {'requests': {'cpu': '50m'}}
+    chart = ROOT / 'charts/inference-stack'
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / 'lens.json'
         write(path, json.dumps(overrides))
-        run(*helm, 'upgrade', 'inference-stack', str(ROOT / 'charts/inference-stack'),
+        run(*helm, 'upgrade', 'inference-stack', str(chart),
             '-n', 'inference', '--reset-then-reuse-values', '-f', str(path), '--atomic', '--timeout', '20m')
-    configure_proxy(public_url)
+    configure_proxy(public_url, gateway_lens=(chart / 'templates/lens-connection.yaml').is_file())
 
 
 def configure_capacity(stack):
