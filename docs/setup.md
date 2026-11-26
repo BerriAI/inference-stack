@@ -44,8 +44,8 @@ The template in `aws/stack.yaml` starts with **0 models and 0 GPUs**. It creates
 
 To start:
 
-1. Open [Launch on AWS](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/create/review?templateURL=https%3A%2F%2Finference-stack-release-templates-templates-e0eqnr6ih8gk.s3.us-east-2.amazonaws.com%2Freleases%2Fv0.4.2%2Faws-stack.yaml&stackName=inference-stack). Sign into the AWS account that will own and pay for the installation.
-2. Enter an **Admin password** of at least 20 characters. Keep the other defaults, review the cost, acknowledge the IAM permissions, and choose **Create stack**.
+1. Download `aws-stack.yaml` from the [latest GitHub release](https://github.com/BerriAI/inference-stack/releases/latest). In the [CloudFormation console (us-east-2)](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2), choose **Create stack → With new resources (standard)** and **Upload a template file**, then select the downloaded file.
+2. Name the stack and enter an **Admin password** of at least 20 characters. Keep the other defaults, review the cost, and acknowledge the IAM permissions before creating the stack.
 3. Wait for `CREATE_COMPLETE`, then open **Outputs → OpenInferenceStack**. Sign in as `admin` with that password. The homepage shows **0 deployments · 0 GPUs**.
 4. Open **Deployments**, choose a model, and review its GPU allocation. If capacity is needed, select an **AWS GPU**, review its memory and hourly price, and choose **Add GPU and deploy**. You can also add GPUs separately from **GPUs**.
 5. Wait for the GPU and model to become ready. Leave the page and return while setup continues; progress is retained.
